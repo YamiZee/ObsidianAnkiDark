@@ -1,6 +1,6 @@
 // ankiconnect.ts
 import { App } from 'obsidian';
-import { Flashcard, ObsidianBasicModel, ObsidianClozeModel } from './models';
+import { Flashcard, ObsidianBasicModel, ObsidianBasicReversedModel, ObsidianClozeModel } from './models';
 
 export async function ankiConnectRequest(action: string, params: any = {}): Promise<any> {
     const response = await fetch('http://127.0.0.1:8765', {
@@ -146,6 +146,10 @@ export async function ensureDefaultModelsExist(): Promise<boolean> {
         if (!models.result.includes(ObsidianClozeModel.modelName)) {
             await ankiConnectRequest('createModel', ObsidianClozeModel);
             console.log('Created model:', ObsidianClozeModel.modelName);
+        }
+        if (!models.result.includes(ObsidianBasicReversedModel.modelName)) {
+            await ankiConnectRequest('createModel', ObsidianBasicReversedModel);
+            console.log('Created model:', ObsidianBasicReversedModel.modelName);
         }
         return true;
     } catch (e) {

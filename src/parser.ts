@@ -1,7 +1,7 @@
 import { App, MarkdownView } from 'obsidian';
 import * as yaml from 'js-yaml';
 import { addNotesToAnki, updateNotesInAnki, ankiConnectRequest, checkAnkiConnect, ensureDefaultModelsExist, ensureDeckExists, processImagesForAnki } from './ankiconnect';
-import { Flashcard } from './models';
+import { Flashcard, FlashcardType } from './models';
 
 export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpdated?: number, cardsDeleted?: number }> {
     // Ensure AnkiConnect is available
@@ -108,7 +108,7 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
         tags = [...tags, ...globalTags];
 
         // Split card into fields
-        const fieldsArr = splitIntoFields(card);
+        const {fields: fieldsArr, reverseCard} = splitIntoFields(card);
         let fields: Record<string, string> = {};
         if (isCloze) {
             fields = { Text: fieldsArr[0] || '', 'Back Extra': fieldsArr[1] || '' };
@@ -135,9 +135,9 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
         const flashcard = new Flashcard({
             id,
             deckName: deck || 'Default',
-            isCloze,
+            type: isCloze ? FlashcardType.Cloze : reverseCard ? FlashcardType.Reversed : FlashcardType.Basic,
             fields,
-            tags
+            tags,
         });
         // console.log(flashcard);
         flashcardBlocks.push({ flashcard, startLine, endLine: i });
@@ -269,17 +269,22 @@ async function deleteMarkedFlashcards(activeView: MarkdownView): Promise<number>
     return noteIds.length;
 }
 
-function splitIntoFields(cardContent: string): string[] {
-    const parts: string[] = [];
+function splitIntoFields(cardContent: string): {fields: string[], reverseCard: boolean} {
+    const fields: string[] = [];
     let currentPart = '';
     let inCurlyBraces = 0;
+    let reverseCard = false;
 
+    console.log('cardContent:', cardContent);
     for (let i = 0; i < cardContent.length; i++) {
         if (cardContent[i] === ':' && cardContent[i + 1] === ':' && inCurlyBraces === 0) {
             // Found :: outside curly braces
-            parts.push(currentPart);
+            fields.push(currentPart);
             currentPart = '';
-            i++;
+            // find how long the sequence of : is via regex
+            const colonCount = cardContent.slice(i).match(/^(:+)/g)?.[0]?.length || 0;
+            reverseCard = colonCount == 3;
+            i += colonCount - 1;
             continue;
         }
         if (cardContent[i] === '{') {
@@ -290,10 +295,11 @@ function splitIntoFields(cardContent: string): string[] {
         currentPart += cardContent[i];
     }
     if (currentPart) {
-        parts.push(currentPart);
+        fields.push(currentPart);
     }
+    console.log('fields:', fields);
     
-    return parts.map(part => part.trim());
+    return {fields: fields.map(field => field.trim()), reverseCard};
 }
 
 function convertToAnkiCloze(content: string): string {
