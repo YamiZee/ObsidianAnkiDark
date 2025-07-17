@@ -68,7 +68,13 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
             inCodeBlock = !inCodeBlock;
         }
         if (line.trim().endsWith('::') || inCodeBlock ||
-            (i + 1 < lines.length && (lines[i+1].trim().startsWith('::') || lines[i+1].trim().startsWith('^')))) {
+            (i + 1 < lines.length && (
+                lines[i+1].trim().startsWith('::') || 
+                lines[i+1].trim().startsWith('^') ||
+                lines[i+1].trim().startsWith('- ') ||
+                /^\d+\.\s/.test(lines[i+1].trim())
+            ))
+        ){
             continue;
         }
     
@@ -118,11 +124,12 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
                 return `<i>${content}</i>`;
             }).replace(/(\~\~)(.*?)\1/g, (match, strikethrough, content) => {
                 return `<s>${content}</s>`;
-            }).replace(/(\`\`\`)(.+?)\1/g, (match, codeblock, content) => {
+            }).replace(/\`\`\`(\w*)\s*?\n([^\`]+?)\r?\n\s*?\`\`\`/g, (match, language, content) => {
+                // tags.push(language);
                 return `<pre><code>${content}</code></pre>`;
             }).replace(/(\`)(.+?)\1/g, (match, code, content) => {
                 return `<pre><code>${content}</code></pre>`;  
-            });
+            }).replace(/\r?\n/g, '<br>');
         }
 
         const flashcard = new Flashcard({
