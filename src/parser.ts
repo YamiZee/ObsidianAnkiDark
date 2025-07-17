@@ -3,7 +3,7 @@ import * as yaml from 'js-yaml';
 import { addNotesToAnki, updateNotesInAnki, ankiConnectRequest, checkAnkiConnect, ensureDefaultModelsExist, ensureDeckExists, processImagesForAnki } from './ankiconnect';
 import { Flashcard } from './models';
 
-export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpdated?: number }> {
+export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpdated?: number, cardsDeleted?: number }> {
     // Ensure AnkiConnect is available
     if (!(await checkAnkiConnect())) {
         return {};
@@ -47,11 +47,9 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
 
     const { cardsAdded, cardsUpdated } = await syncFlashcardsWithAnki(flashcardBlocks, activeView);
 
-    await deleteMarkedFlashcards(activeView);
+    const cardsDeleted = await deleteMarkedFlashcards(activeView);
 
-    // console.log('cardsAdded:', cardsAdded);
-    // console.log('cardsUpdated:', cardsUpdated);
-    return { cardsAdded, cardsUpdated };
+    return { cardsAdded, cardsUpdated, cardsDeleted };
 }
 
 function getFlashcards(content: string, deck: string | undefined, globalTags: string[]): Array<{ flashcard: Flashcard, startLine: number, endLine: number }> {
@@ -226,13 +224,13 @@ async function syncFlashcardsWithAnki(flashcardBlocks: Array<{ flashcard: Flashc
         // cardsUpdated = updateResults.filter(success => success).length;
     }
 
-    console.log(`newCards (${newCards.length}):`, newCards);
-    console.log(`existingCards (${existingCards.length}):`, existingCards);
+    console.log(`Added ${newCards.length} cards:`, newCards.map(block => block.flashcard));
+    console.log(`Updated ${existingCards.length} cards:`, existingCards.map(block => block.flashcard));
     
     return { cardsAdded, cardsUpdated };
 }
 
-async function deleteMarkedFlashcards(activeView: MarkdownView) {
+async function deleteMarkedFlashcards(activeView: MarkdownView): Promise<number> {
     const editor = activeView.editor;
     const content = editor.getValue();
     // Regex to match 'delete' on its own line followed by a footnote
@@ -249,7 +247,7 @@ async function deleteMarkedFlashcards(activeView: MarkdownView) {
         noteIds.push(Number(match[1]));
     }
     if (noteIds.length === 0) {
-        return;
+        return 0;
     }
     // Delete notes in Anki and remove from editor, process from end to start to avoid shifting
     for (let i = noteIds.length - 1; i >= 0; i--) {
@@ -261,6 +259,7 @@ async function deleteMarkedFlashcards(activeView: MarkdownView) {
     }
     const result = await ankiConnectRequest('deleteNotes', { notes: noteIds });
     console.log('Deleted notes:', noteIds);
+    return noteIds.length;
 }
 
 function splitIntoFields(cardContent: string): string[] {
@@ -290,32 +289,6 @@ function splitIntoFields(cardContent: string): string[] {
     return parts.map(part => part.trim());
 }
 
-function processImages(content: string, activeView: MarkdownView): string {
-    // Handle Obsidian image references
-    // Match ![[path]]
-    return content.replace(/!\[\[([^\[\]\n]+)\]\]/g, (match, imagePath) => {
-        let processedPath = imagePath;
-        
-        // Handle attachment references
-        if (imagePath.startsWith('attachment:')) {
-            const attachmentName = imagePath.substring('attachment:'.length);
-            // For attachments, we'll use the filename directly
-            processedPath = attachmentName;
-        } else if (imagePath.startsWith('http')) {
-            // External URLs - keep as is
-            processedPath = imagePath;
-        } else {
-            // Local file paths - convert to attachment format
-            // Extract just the filename from the path
-            const fileName = imagePath.split('/').pop() || imagePath.split('\\').pop() || imagePath;
-            processedPath = fileName;
-        }
-        
-        // Return Anki image tag
-        return `<img src="${processedPath}">`;
-    });
-}
-
 function convertToAnkiCloze(content: string): string {
     let result = content;
 
@@ -326,17 +299,16 @@ function convertToAnkiCloze(content: string): string {
         const clozeNum = Math.min(openCount, closeCount);
         return hint ? `{{c${clozeNum}::${cloze}::${hint}}}` : `{{c${clozeNum}::${cloze}}}`;
     });
-
     // Match {1:cloze:hint} to {{c1::cloze::hint}}, or {1:cloze} to {{c1::cloze}}
     result = result.replace(/(?<!{){(\d+):([^{}\n\r:]+)(?::([^\{\}\n\r:]+))?}/g, (match, num, cloze, hint) => {
         return hint ? `{{c${num}::${cloze}::${hint}}}` : `{{c${num}::${cloze}}}`;
     });
-
     // ==cloze== to {{c1::cloze}}
     result = result.replace(/==([^=]+)==/g, '{{c1::$1}}');
 
     return result;
 }
+
 function handleBrackets(content: string): string {
     let result = content;
     let bracketContent = '';

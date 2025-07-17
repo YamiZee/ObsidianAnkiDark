@@ -75,10 +75,10 @@ export class Flashcard {
         tags?: string[];
         modelName?: string;
     }) {
+        this.id = id;
         this.deckName = deckName;
         this.isCloze = isCloze;
         this.fields = fields;
-        this.id = id;
         this.tags = tags || [];
         this.modelName = modelName || (isCloze ? ObsidianClozeModel.modelName : ObsidianBasicModel.modelName);
     }
