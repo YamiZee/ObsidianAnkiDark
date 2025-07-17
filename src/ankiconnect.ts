@@ -62,11 +62,12 @@ export async function updateNotesInAnki(flashcards: Flashcard[]): Promise<any> {
         const result = await changeDeck(flashcards, flashcards[0].deckName);
 
         const actions = flashcards.map(flashcard => ({
-            action: 'updateNoteFields',
+            action: 'updateNote',
             params: {
                 note: {
                     id: flashcard.id,
-                    fields: flashcard.fields
+                    fields: flashcard.fields,
+                    tags: flashcard.tags
                 }
             }
         }));
