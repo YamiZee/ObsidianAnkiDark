@@ -1,0 +1,11 @@
+{
+	"id": "anki-dark-plugin",
+	"name": "Anki Dark",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Yet another Anki plugin for Obsidian.",
+	"author": "Yami",
+	"authorUrl": "https://obsidian.md",
+	"fundingUrl": "https://obsidian.md/pricing",
+	"isDesktopOnly": false
+}
