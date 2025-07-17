@@ -202,21 +202,27 @@ export async function ensureDefaultModelsExist(): Promise<boolean> {
     }
 }
 
-export async function uploadMediaFile(filePath: string, fileName: string): Promise<boolean> {
+export async function uploadMediaFile(filePath: string, fileName: string, app: App): Promise<boolean> {
+    // Check if file already exists in anki
+    const result = await ankiConnectRequest('getMediaFilesNames', {
+        pattern: fileName
+    });
+    if (result?.result?.length > 0) {
+        return true;
+    }
+    // Upload file
     try {
-        // Read the file from the filesystem
-        const fs = require('fs');
-        const fileBuffer = fs.readFileSync(filePath);
-        const base64FileBuffer = fileBuffer.toString('base64');
+        console.log('uploadMediaFile filePath:', filePath);
+        const fileBuffer = await app.vault.adapter.readBinary(filePath);
+        const base64FileBuffer = Buffer.from(fileBuffer).toString('base64');
         
         const result = await ankiConnectRequest('storeMediaFile', {
             filename: fileName,
             data: base64FileBuffer
         });
 
-        // console.log('uploadMediaFile result:', result);
+        console.log('Uploaded media file:', fileName);
         return result?.result === true;
-
     } catch (error) {
         console.error(`Error uploading media file ${fileName}:`, error);
         return false;
@@ -242,26 +248,34 @@ export async function processImagesForAnki(content: string, vaultPath: string, a
     }
     
     for (const filename of imageFilenames) {
+        // Check if url
+        if (filename.startsWith('http://') || filename.startsWith('https://')) {
+            continue;
+        }
         // Try to find the actual file in the vault
-        let actualFilePath = '';
+        let filePath = '';
         
         // First try the filename as-is (in case it's in root)
         if (await app.vault.adapter.exists(filename)) {
-            actualFilePath = `${vaultPath}/${filename}`;
+            filePath = filename; // vault-relative
         } else {
             // Search for the file in the vault
             const files = app.vault.getFiles();
             const matchingFile = files.find(file => file.name === filename);
-            
             if (matchingFile) {
-                actualFilePath = `${vaultPath}/${matchingFile.path}`;
+                filePath = matchingFile.path; // vault-relative
             } else {
                 console.warn(`Could not find image file: ${filename}`);
                 continue;
             }
         }
-        
-        await uploadMediaFile(actualFilePath, filename);
+        // possible duplicate within obsidian, store/image.jpg -> store_image.jpg
+        content = content.replace(/<img src="(.*)"/g, (match, imagePath) => {
+            imagePath = imagePath.replace(/[\\\/]/g, '_');
+            return `<img src="${imagePath}"`;
+        });
+
+        await uploadMediaFile(filePath, filename, app);
     }
     return content;
 }
