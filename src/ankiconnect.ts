@@ -1,4 +1,5 @@
 // ankiconnect.ts
+import { App } from 'obsidian';
 
 export const ObsidianBasicModel = {
     modelName: 'ObsidianBasic',
@@ -179,6 +180,10 @@ export async function changeDeck(flashcards: Flashcard[], deckName: string): Pro
     }
 }
 
+export function sanitizeDeckName(deckName: string): string {
+    return deckName.replace(/[\\/]/g, '::');
+}
+
 export async function ensureDefaultModelsExist(): Promise<boolean> {
     try {
         const models = await ankiConnectRequest('modelNames');
@@ -197,46 +202,66 @@ export async function ensureDefaultModelsExist(): Promise<boolean> {
     }
 }
 
-export function sanitizeDeckName(deckName: string): string {
-    return deckName.replace(/[\\/]/g, '::');
+export async function uploadMediaFile(filePath: string, fileName: string): Promise<boolean> {
+    try {
+        // Read the file from the filesystem
+        const fs = require('fs');
+        const fileBuffer = fs.readFileSync(filePath);
+        const base64FileBuffer = fileBuffer.toString('base64');
+        
+        const result = await ankiConnectRequest('storeMediaFile', {
+            filename: fileName,
+            data: base64FileBuffer
+        });
+
+        // console.log('uploadMediaFile result:', result);
+        return result?.result === true;
+
+    } catch (error) {
+        console.error(`Error uploading media file ${fileName}:`, error);
+        return false;
+    }
 }
 
-
-/* Not used anymore
-
-
-
-export async function updateNoteInAnki(flashcard: Flashcard): Promise<boolean> {
-    if (typeof flashcard.id !== 'number') return false;
-    const result = await ankiConnectRequest('updateNoteFields', {
-        note: {
-            id: flashcard.id,
-            fields: flashcard.fields
-        }
+export async function processImagesForAnki(content: string, vaultPath: string, app: App): Promise<string> {
+    // Convert markdown image syntax to HTML
+    // ![[path]]
+    const imageFilenames: string[] = [];
+    content = content.replace(/!\[\[([^\[\]\n]+)\]\]/g, (match, imagePath) => {
+        imageFilenames.push(imagePath);
+        return `<img src="${imagePath}">`;
     });
-    return result && result.result === null; // updateNoteFields returns { result: null, error: null } on success
-}
+    // ![alt](path)
+    content = content.replace(/!\[([^\[\]\n]+)\]\(([^\(\)\n]+)\)/g, (match, altText, imagePath) => {
+        imageFilenames.push(imagePath);
+        return `<img src="${imagePath}" alt="${altText}">`;
+    });
 
-
-export async function addNoteToAnki(flashcard: Flashcard): Promise<number | null> {
-    const result = await ankiConnectRequest('addNote', {
-        note: {
-            deckName: flashcard.deckName,
-            modelName: flashcard.modelName,
-            fields: flashcard.fields,
-            tags: flashcard.tags,
-            options: {
-                allowDuplicate: true
+    if (imageFilenames.length > 0) {
+        console.log('Processing images:', imageFilenames);
+    }
+    
+    for (const filename of imageFilenames) {
+        // Try to find the actual file in the vault
+        let actualFilePath = '';
+        
+        // First try the filename as-is (in case it's in root)
+        if (await app.vault.adapter.exists(filename)) {
+            actualFilePath = `${vaultPath}/${filename}`;
+        } else {
+            // Search for the file in the vault
+            const files = app.vault.getFiles();
+            const matchingFile = files.find(file => file.name === filename);
+            
+            if (matchingFile) {
+                actualFilePath = `${vaultPath}/${matchingFile.path}`;
+            } else {
+                console.warn(`Could not find image file: ${filename}`);
+                continue;
             }
         }
-    });
-    if (result && typeof result.result === 'number') {
-        console.log('Note added to Anki:', result.result);
-        return result.result; // note id
+        
+        await uploadMediaFile(actualFilePath, filename);
     }
-    return null;
+    return content;
 }
-
-
-
-*/

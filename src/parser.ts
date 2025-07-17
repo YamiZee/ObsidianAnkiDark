@@ -1,6 +1,6 @@
 import { App, MarkdownView } from 'obsidian';
 import * as yaml from 'js-yaml';
-import { Flashcard, addNotesToAnki, updateNotesInAnki, ankiConnectRequest, checkAnkiConnect, ensureDefaultModelsExist, ensureDeckExists } from './ankiconnect';
+import { Flashcard, addNotesToAnki, updateNotesInAnki, ankiConnectRequest, checkAnkiConnect, ensureDefaultModelsExist, ensureDeckExists, processImagesForAnki } from './ankiconnect';
 
 export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpdated?: number }> {
     // Ensure AnkiConnect is available
@@ -33,6 +33,16 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
     flashcardBlocks.forEach(block => {
         block.flashcard.fields.Source = sourceLink;
     });
+
+    // Process images in each field
+    const vaultPath = (activeView.app.vault.adapter as any).basePath;
+    for (const block of flashcardBlocks) {
+        for (const [fieldName, fieldContent] of Object.entries(block.flashcard.fields)) {
+            if (fieldContent) {
+                block.flashcard.fields[fieldName] = await processImagesForAnki(fieldContent, vaultPath, activeView.app);
+            }
+        }
+    }
 
     const { cardsAdded, cardsUpdated } = await syncFlashcardsWithAnki(flashcardBlocks, activeView);
 
@@ -231,6 +241,58 @@ function splitIntoFields(cardContent: string): string[] {
     return parts.map(part => part.trim());
 }
 
+function processImages(content: string, activeView: MarkdownView): string {
+    // Handle Obsidian image references
+    // Match ![[path]]
+    return content.replace(/!\[\[([^\[\]\n]+)\]\]/g, (match, imagePath) => {
+        let processedPath = imagePath;
+        
+        // Handle attachment references
+        if (imagePath.startsWith('attachment:')) {
+            const attachmentName = imagePath.substring('attachment:'.length);
+            // For attachments, we'll use the filename directly
+            processedPath = attachmentName;
+        } else if (imagePath.startsWith('http')) {
+            // External URLs - keep as is
+            processedPath = imagePath;
+        } else {
+            // Local file paths - convert to attachment format
+            // Extract just the filename from the path
+            const fileName = imagePath.split('/').pop() || imagePath.split('\\').pop() || imagePath;
+            processedPath = fileName;
+        }
+        
+        // Return Anki image tag
+        return `<img src="${processedPath}">`;
+    });
+}
+
+// function processImages(content: string, activeView: MarkdownView): string {
+//     // Handle Obsidian image references
+//     // Match ![alt](path) or ![alt](attachment:filename)
+//     return content.replace(/!\([^\]]*\)\]\((^)]+)\)/g, (match, altText, imagePath) => {
+//         let processedPath = imagePath;
+        
+//         // Handle attachment references
+//         if (imagePath.startsWith('attachment:')) {
+//             const attachmentName = imagePath.substring('attachment:'.length);
+//             // For attachments, we'll use the filename directly
+//             processedPath = attachmentName;
+//         } else if (imagePath.startsWith('http')) {
+//             // External URLs - keep as is
+//             processedPath = imagePath;
+//         } else {
+//             // Local file paths - convert to attachment format
+//             // Extract just the filename from the path
+//             const fileName = imagePath.split('/').pop() || imagePath.split('\\').pop() || imagePath;
+//             processedPath = fileName;
+//         }
+        
+//         // Return Anki image tag
+//         return `<img src=${processedPath}" alt="${altText}">`;
+//     });
+// }
+
 function convertToAnkiCloze(content: string): string {
     let result = content;
 
@@ -255,7 +317,7 @@ function convertToAnkiCloze(content: string): string {
 function handleBrackets(content: string): string {
     let result = content;
     let bracketContent = '';
-    result = result.replace(/\[\[([^\[\]\n]+)\]\]/g, (match, link) => {
+    result = result.replace(/(?<!!)\[\[([^\[\]\n]+)\]\]/g, (match, link) => {
         bracketContent = link;
         return link;
     });
