@@ -267,32 +267,6 @@ function processImages(content: string, activeView: MarkdownView): string {
     });
 }
 
-// function processImages(content: string, activeView: MarkdownView): string {
-//     // Handle Obsidian image references
-//     // Match ![alt](path) or ![alt](attachment:filename)
-//     return content.replace(/!\([^\]]*\)\]\((^)]+)\)/g, (match, altText, imagePath) => {
-//         let processedPath = imagePath;
-        
-//         // Handle attachment references
-//         if (imagePath.startsWith('attachment:')) {
-//             const attachmentName = imagePath.substring('attachment:'.length);
-//             // For attachments, we'll use the filename directly
-//             processedPath = attachmentName;
-//         } else if (imagePath.startsWith('http')) {
-//             // External URLs - keep as is
-//             processedPath = imagePath;
-//         } else {
-//             // Local file paths - convert to attachment format
-//             // Extract just the filename from the path
-//             const fileName = imagePath.split('/').pop() || imagePath.split('\\').pop() || imagePath;
-//             processedPath = fileName;
-//         }
-        
-//         // Return Anki image tag
-//         return `<img src=${processedPath}" alt="${altText}">`;
-//     });
-// }
-
 function convertToAnkiCloze(content: string): string {
     let result = content;
 
@@ -350,28 +324,3 @@ function extractYamlProperties(content: string): { deck?: string, tags: string[]
     }
     return { deck: parsed.deck, tags };
 }
-
-// Unnecessary functions
-
-function parseClozePatterns(content: string) {
-    // Regex to match {c1::world::noun}, {world}, {c2::world}, {world::noun}
-    const regex = /\{(?:c(\d+)::)?((?:(?!::)[^}])+)(?:::(.*?))?}/g;
-    let match;
-    const results = [];
-    while ((match = regex.exec(content)) !== null) {
-        const clozeNumber = match[1] || 1; // 1 if not present
-        const clozeText = match[2];
-        const optionalInfo = match[3];
-        results.push({ clozeNumber, clozeText, optionalInfo });
-    }
-    return results;
-}
-
-    // Check for code block markers
-    // if (content[i] === '`') {
-    //     inCodeBlock = !inCodeBlock;
-    //     continue;
-    // }
-
-    
-    // result = result.replace(/(?<!\{)\{([^\n\r:{}]+)(?:::([^\n\r{}]+))?\}(?!\})/g, (match, cloze, hint) => {
