@@ -1,6 +1,7 @@
 import { App, MarkdownView } from 'obsidian';
 import * as yaml from 'js-yaml';
-import { Flashcard, addNotesToAnki, updateNotesInAnki, ankiConnectRequest, checkAnkiConnect, ensureDefaultModelsExist, ensureDeckExists, processImagesForAnki } from './ankiconnect';
+import { addNotesToAnki, updateNotesInAnki, ankiConnectRequest, checkAnkiConnect, ensureDefaultModelsExist, ensureDeckExists, processImagesForAnki } from './ankiconnect';
+import { Flashcard } from './models';
 
 export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpdated?: number }> {
     // Ensure AnkiConnect is available
@@ -109,6 +110,21 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
             fields = { Front: fieldsArr[0] || '', Back: fieldsArr[1] || '' };
         }
 
+        // Format fields from markdown to html (such as bold, italic, strikethrough, codeblocks,  etc.)
+        for (const [fieldName, fieldContent] of Object.entries(fields)) {
+            fields[fieldName] = fieldContent.replace(/(\*\*|__)(.*?)\1/g, (match, bold, content) => {
+                return `<b>${content}</b>`;
+            }).replace(/(\*|_)(.*?)\1/g, (match, italic, content) => {
+                return `<i>${content}</i>`;
+            }).replace(/(\~\~)(.*?)\1/g, (match, strikethrough, content) => {
+                return `<s>${content}</s>`;
+            }).replace(/(\`\`\`)(.+?)\1/g, (match, codeblock, content) => {
+                return `<pre><code>${content}</code></pre>`;
+            }).replace(/(\`)(.+?)\1/g, (match, code, content) => {
+                return `<pre><code>${content}</code></pre>`;  
+            });
+        }
+
         const flashcard = new Flashcard({
             id,
             deckName: deck || 'Default',
@@ -208,8 +224,8 @@ async function syncFlashcardsWithAnki(flashcardBlocks: Array<{ flashcard: Flashc
         // cardsUpdated = updateResults.filter(success => success).length;
     }
 
-    console.log('newCards:', newCards);
-    console.log('existingCards:', existingCards);
+    console.log(`newCards (${newCards.length}):`, newCards);
+    console.log(`existingCards (${existingCards.length}):`, existingCards);
     
     return { cardsAdded, cardsUpdated };
 }

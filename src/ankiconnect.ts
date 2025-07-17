@@ -1,55 +1,6 @@
 // ankiconnect.ts
 import { App } from 'obsidian';
-
-export const ObsidianBasicModel = {
-    modelName: 'ObsidianBasic',
-    inOrderFields: ['Front', 'Back', 'Source'],
-    cardTemplates: [
-        {
-            Name: 'Card 1',
-            Front: '{{Front}}',
-            Back: '{{Front}}<hr id=answer>{{Back}}<br>{{Source}}'
-        }
-    ]
-};
-
-export const ObsidianClozeModel = {
-    modelName: 'ObsidianCloze',
-    inOrderFields: ['Text', 'Back Extra', 'Source'],
-    cardTemplates: [
-        {
-            Name: 'Cloze',
-            Front: '{{cloze:Text}}',
-            Back: '{{cloze:Text}}<br>{{Back Extra}}<br>{{Source}}'
-        }
-    ],
-    isCloze: true
-};
-
-export class Flashcard {
-    id?: number;
-    deckName: string;
-    isCloze: boolean;
-    fields: Record<string, string>;
-    tags: string[];
-    modelName: string;
-
-    constructor({ id, deckName, isCloze, fields, tags, modelName }: {
-        id?: number;
-        deckName: string;
-        isCloze: boolean;
-        fields: Record<string, string>;
-        tags?: string[];
-        modelName?: string;
-    }) {
-        this.deckName = deckName;
-        this.isCloze = isCloze;
-        this.fields = fields;
-        this.id = id;
-        this.tags = tags || [];
-        this.modelName = modelName || (isCloze ? ObsidianClozeModel.modelName : ObsidianBasicModel.modelName);
-    }
-}
+import { Flashcard, ObsidianBasicModel, ObsidianClozeModel } from './models';
 
 export async function ankiConnectRequest(action: string, params: any = {}): Promise<any> {
     const response = await fetch('http://127.0.0.1:8765', {
