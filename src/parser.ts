@@ -47,6 +47,8 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
 
     const { cardsAdded, cardsUpdated } = await syncFlashcardsWithAnki(flashcardBlocks, activeView);
 
+    await deleteMarkedFlashcards(activeView);
+
     // console.log('cardsAdded:', cardsAdded);
     // console.log('cardsUpdated:', cardsUpdated);
     return { cardsAdded, cardsUpdated };
@@ -228,6 +230,37 @@ async function syncFlashcardsWithAnki(flashcardBlocks: Array<{ flashcard: Flashc
     console.log(`existingCards (${existingCards.length}):`, existingCards);
     
     return { cardsAdded, cardsUpdated };
+}
+
+async function deleteMarkedFlashcards(activeView: MarkdownView) {
+    const editor = activeView.editor;
+    const content = editor.getValue();
+    // Regex to match 'delete' on its own line followed by a footnote
+    const deleteRegex = /^(?<!::\n)(?<!::\r\n)[ \t]*?delete\s*?\^(\d+)\s*?$/gmi;
+    const deletePortions: { start: number, end: number }[] = [];
+    const noteIds: number[] = [];
+    // Find all matches and their positions
+    let match;
+    while (match = deleteRegex.exec(content)) {
+        deletePortions.push({
+            start: match.index,
+            end: deleteRegex.lastIndex,
+        });
+        noteIds.push(Number(match[1]));
+    }
+    if (noteIds.length === 0) {
+        return;
+    }
+    // Delete notes in Anki and remove from editor, process from end to start to avoid shifting
+    for (let i = noteIds.length - 1; i >= 0; i--) {
+        const { start, end } = deletePortions[i];
+        // Convert start and end indices to line/char positions
+        const startPos = editor.offsetToPos(start);
+        const endPos = editor.offsetToPos(end);
+        editor.replaceRange('', startPos, endPos);
+    }
+    const result = await ankiConnectRequest('deleteNotes', { notes: noteIds });
+    console.log('Deleted notes:', noteIds);
 }
 
 function splitIntoFields(cardContent: string): string[] {
