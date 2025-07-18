@@ -24,8 +24,10 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
     const deckName = deck || 'Default';
     
     await ensureDeckExists(deckName);
+
+    const flashcardBodies = getFlashcardBodies(content);
     
-    const flashcardBlocks = getFlashcards(content, deckName, globalTags);
+    const flashcardBlocks = makeFlashcards(flashcardBodies, deckName, globalTags);
     
     // Set source link for all flashcards
     const fileName = activeView.file?.basename || 'unknown';
@@ -52,12 +54,52 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
     return { cardsAdded, cardsUpdated, cardsDeleted };
 }
 
-function getFlashcards(content: string, deck: string | undefined, globalTags: string[]): Array<{ flashcard: Flashcard, startLine: number, endLine: number }> {
+// function getFlascardBodiesViaRegex(content: string): {body: string, startLine: number, endLine: number}[] {
+//     const regex = /^(?<!::\n)(?<!::\r\n)[ \t]*?delete\s*?\^(\d+)\s*?$/gmi;
+//     const matches = content.matchAll(regex);
+//     const flashcardBodies = [];
+//     for (const match of matches) {
+//         flashcardBodies.push({body: match[1], startLine: match.index, endLine: match.index + match[1].length});
+//     }
+//     return flashcardBodies;
+// }
+
+function getCodeBlocks(content: string): {start: number, end: number}[] {
+    const blockRegex = /```[\s\S]*?```/g;
+    const inlineRegex = /`[^\n\r]*?`/g;
+    const blockMatches = content.matchAll(blockRegex);
+    const inlineMatches = content.matchAll(inlineRegex);
+    const codeBlocks = [];
+    for (const match of blockMatches) {
+        codeBlocks.push({start: match.index, end: match.index + match[0].length});
+    }
+    for (const match of inlineMatches) {
+        codeBlocks.push({start: match.index, end: match.index + match[0].length});
+    }
+    return codeBlocks;
+}
+function getLatexBlocks(content: string): {start: number, end: number}[] {
+    const blockRegex = /\$\$[\s\S]*?\$\$/g;
+    const inlineRegex = /\$[^\n\r]*?\$/g;
+    const blockMatches = content.matchAll(blockRegex);
+    const inlineMatches = content.matchAll(inlineRegex);
+    const latexBlocks = [];
+    for (const match of blockMatches) {
+        latexBlocks.push({start: match.index, end: match.index + match[0].length});
+    }
+    for (const match of inlineMatches) {
+        latexBlocks.push({start: match.index, end: match.index + match[0].length});
+    }
+    return latexBlocks;
+}
+
+function getFlashcardBodies(content: string): {body: string, startLine: number, endLine: number}[] {
     const lines = content.split(/\r?\n/);
     let currentCard: string[] = [];
-    let inCodeBlock = false;
     let startLine = 0;
-    const flashcardBlocks: Array<{ flashcard: Flashcard, startLine: number, endLine: number }> = [];
+    let inCodeBlock = false;
+    let inLatexBlock = false;
+    const flashcardBodies = [];
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -66,8 +108,10 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
 
         if (line.trim().startsWith('```')) {
             inCodeBlock = !inCodeBlock;
+        } else if (line.trim().startsWith('$$')) {
+            inLatexBlock = !inLatexBlock;
         }
-        if (line.trim().endsWith('::') || inCodeBlock ||
+        if (line.trim().endsWith('::') || inCodeBlock || inLatexBlock ||
             (i + 1 < lines.length && (
                 lines[i+1].trim().startsWith('::') || 
                 lines[i+1].trim().startsWith('^') ||
@@ -77,9 +121,23 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
         ){
             continue;
         }
-    
+        // Check card validity
+        let cardBody = currentCard.join('\n');
+        cardBody = convertToAnkiCloze(cardBody);
+        if (!isClozeCard(cardBody) && !cardBody.includes('::')) {
+            continue;
+        }
+        flashcardBodies.push({body: currentCard.join('\n'), startLine, endLine: i});
+        currentCard = [];
+    }
+    return flashcardBodies;
+}
+
+function makeFlashcards(flashcardBodies: {body: string, startLine: number, endLine: number}[], deck: string | undefined, globalTags: string[]): Array<{ flashcard: Flashcard, startLine: number, endLine: number }> {
+    const flashcardBlocks = [];
+    for (let {body, startLine, endLine} of flashcardBodies) {
+        let card = body;
         // Generate card
-        let card = currentCard.join('\n').trim();
         card = convertToAnkiCloze(card);
         card = handleBrackets(card);
         let isCloze = isClozeCard(card);
@@ -88,7 +146,6 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
 
         if (!isCloze && !card.includes('::')) {
             // Not a card
-            currentCard = [];
             continue;
         }
 
@@ -118,18 +175,8 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
 
         // Format fields from markdown to html (such as bold, italic, strikethrough, codeblocks,  etc.)
         for (const [fieldName, fieldContent] of Object.entries(fields)) {
-            fields[fieldName] = fieldContent.replace(/(\*\*|__)(.*?)\1/g, (match, bold, content) => {
-                return `<b>${content}</b>`;
-            }).replace(/(\*|_)(.*?)\1/g, (match, italic, content) => {
-                return `<i>${content}</i>`;
-            }).replace(/(\~\~)(.*?)\1/g, (match, strikethrough, content) => {
-                return `<s>${content}</s>`;
-            }).replace(/\`\`\`(\w*)\s*?\n([^\`]+?)\r?\n\s*?\`\`\`/g, (match, language, content) => {
-                // tags.push(language);
-                return `<pre><code>${content}</code></pre>`;
-            }).replace(/(\`)(.+?)\1/g, (match, code, content) => {
-                return `<pre><code>${content}</code></pre>`;  
-            }).replace(/\r?\n/g, '<br>');
+            fields[fieldName] = applyMarkdownFormatting(fieldContent);
+            // fields[fieldName] = formatMarkdownToHtml(fieldContent);
         }
 
         const flashcard = new Flashcard({
@@ -140,8 +187,7 @@ function getFlashcards(content: string, deck: string | undefined, globalTags: st
             tags,
         });
         // console.log(flashcard);
-        flashcardBlocks.push({ flashcard, startLine, endLine: i });
-        currentCard = [];
+        flashcardBlocks.push({ flashcard, startLine, endLine });
     }
     return flashcardBlocks;
 }
@@ -357,4 +403,63 @@ function extractYamlProperties(content: string): { deck?: string, tags: string[]
         }
     }
     return { deck: parsed.deck, tags };
+}
+
+function formatMarkdownToHtml(content: string): string {
+    // Get all special blocks
+    const codeBlocks = getCodeBlocks(content);
+    const latexBlocks = getLatexBlocks(content);
+    
+    // Combine and sort all special blocks
+    const allBlocks = [...codeBlocks, ...latexBlocks].sort((a, b) => a.start - b.start);
+
+    // Ensure no blocks overlap
+    const filteredBlocks: {start: number, end: number}[] = [];
+    for (const block of allBlocks) {
+        if (filteredBlocks.length === 0 || block.start >= filteredBlocks[filteredBlocks.length - 1].end) {
+            filteredBlocks.push(block);
+        }
+        // If there is overlap, we silently skip this block
+    }
+
+    if (filteredBlocks.length === 0) {
+        // If no special blocks, process the entire content
+        return applyMarkdownFormatting(content);
+    }
+
+    // Process content in segments, preserving special blocks
+    let result = '';
+    let lastEnd = 0;
+
+    for (const block of filteredBlocks) {
+        // Process text before the block
+        if (block.start > lastEnd) {
+            const textSegment = content.slice(lastEnd, block.start);
+            result += applyMarkdownFormatting(textSegment);
+        }
+        
+        // Keep the block content unchanged
+        result += content.slice(block.start, block.end);
+        lastEnd = block.end;
+    }
+
+    // Process any remaining text after the last block
+    if (lastEnd < content.length) {
+        const textSegment = content.slice(lastEnd);
+        result += applyMarkdownFormatting(textSegment);
+    }
+
+    // Convert newlines to <br> tags at the end to avoid interfering with block detection
+    // return result.replace(/\r?\n/g, '<br>');
+    return result;
+}
+
+function applyMarkdownFormatting(text: string): string {
+    return text
+        .replace(/(\*\*|__)(.*?)\1/g, (match, bold, content) => `<b>${content}</b>`)
+        .replace(/(\*|_)(.*?)\1/g, (match, italic, content) => `<i>${content}</i>`)
+        .replace(/(\~\~)(.*?)\1/g, (match, strikethrough, content) => `<s>${content}</s>`)
+        .replace(/\`\`\`(\w*)\s*?\n([^\`]+?)\r?\n\s*?\`\`\`/g, (match, language, content) => `<pre><code>${content}</code></pre>`)
+        .replace(/(\`)(.+?)\1/g, (match, code, content) => `<pre><code>${content}</code></pre>`)
+        .replace(/\r?\n/g, '<br>');
 }

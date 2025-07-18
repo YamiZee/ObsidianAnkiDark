@@ -1,11 +1,18 @@
 
 
-const captureNotes = "/(?<=^)(?<!::^)(?!\^)(?:[\s\S]*?)\n(?<!::\n)(?![ \t]*?(?:\^|::))/gm";
+const captureNotes = "/(?<=^)(?<!::^)(?!\^)(?:[\s\S]*?)\n(?<!::\r?\n)(?![ \t]*?(?:\^|::))/gm";
 
 
+const line ="/(?<=^|\n)[\s\S]*?(?:$|\r?\n)/g";
 
+// xxxx::\nxxxx
+const ccEnd = "/(?<=^|\n)[^\n]*?::[ \t]*\r?\n[^\n]*(?:$|\n)/g";
+// xxxx\n::xxxx
+const ccStart = "/(?<=^|\n)[^\n]*\n[ \t]*::[^\n]*(?:$|\n)/g";
+// xxxx\n^1 xxxx
+const footnoteStart = "/(?<=^|\n)[^\n]*\n[ \t]*\^\d+[ \t]*(?:$|\r?\n)/g";
 
-
+//(?<=^|\n)[ \t]*?[^\n]*?(?:$|\r?\n)
 
 // Unnecessary functions
 
