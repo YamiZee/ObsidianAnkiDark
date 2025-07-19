@@ -28,7 +28,15 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
     const flashcardBodies = getFlashcardBodies(content);
     
     const flashcardBlocks = makeFlashcards(flashcardBodies, deckName, globalTags);
-    
+
+    // Extract tags from headers and apply to flashcards
+    for (const block of flashcardBlocks) {
+        const headers = getHeadersForLine(content, block.startLine);
+        const headerTags = headers.flatMap(h => (h.content.match(/\s(#[\w-]+)/g) || []));
+        // Add header tags to the flashcard's tags, avoiding duplicates
+        block.flashcard.tags = Array.from(new Set([...(block.flashcard.tags || []), ...headerTags]));
+    }
+
     // Set source link for all flashcards
     const fileName = activeView.file?.basename || 'unknown';
     const vaultName = activeView.app.vault.getName();
@@ -54,17 +62,6 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
     return { cardsAdded, cardsUpdated, cardsDeleted };
 }
 
-// function getFlascardBodiesViaRegex(content: string): {body: string, startLine: number, endLine: number}[] {
-//     const regex = /^(?<!::\n)(?<!::\r\n)[ \t]*?delete\s*?\^(\d+)\s*?$/gmi;
-//     const matches = content.matchAll(regex);
-//     const flashcardBodies = [];
-//     for (const match of matches) {
-//         flashcardBodies.push({body: match[1], startLine: match.index, endLine: match.index + match[1].length});
-//     }
-//     return flashcardBodies;
-// }
-
-
 function getFlashcardBodies(content: string): {body: string, startLine: number, endLine: number}[] {
     const lines = content.split(/\r?\n/);
     let currentCard: string[] = [];
@@ -83,7 +80,7 @@ function getFlashcardBodies(content: string): {body: string, startLine: number, 
         } else if (line.trim().startsWith('$$')) {
             inLatexBlock = !inLatexBlock;
         }
-        if (line.trim().endsWith('::') || inCodeBlock || inLatexBlock ||
+        if (line.trim().endsWith(':') || inCodeBlock || inLatexBlock ||
             (i + 1 < lines.length && (
                 lines[i+1].trim().startsWith('::') || 
                 lines[i+1].trim().startsWith('^') ||
@@ -97,6 +94,7 @@ function getFlashcardBodies(content: string): {body: string, startLine: number, 
         let cardBody = currentCard.join('\n');
         cardBody = convertToAnkiCloze(cardBody);
         if (!isClozeCard(cardBody) && !cardBody.includes('::')) {
+            currentCard = [];
             continue;
         }
         flashcardBodies.push({body: currentCard.join('\n'), startLine, endLine: i});
@@ -110,7 +108,7 @@ function makeFlashcards(flashcardBodies: {body: string, startLine: number, endLi
     for (let {body, startLine, endLine} of flashcardBodies) {
         let card = body;
         // Generate card
-        card = convertToAnkiCloze(card);
+        card = convertToAnkiCloze(card); //TODO: this should probably be done after all other formatting
         card = handleBrackets(card);
         let isCloze = isClozeCard(card);
         let id: number | undefined = undefined;
@@ -469,3 +467,40 @@ function applyBlockFormatting(text: string): string {
         .replace(/^\$\$([\s\S]*)\$\$$/g, (match, content) => `\\\[${content.trim()}\\\]`)
         .replace(/^\$([\s\S]*)\$$/g, (match, content) => `\\\(${content.trim()}\\\)`)
 }
+
+function getHeadersForLine(content: string, line: number): {content: string, level: number, line: number}[] {
+    const headerList = getHeaderList(content);
+    const headers = [];
+    let lastLevel = 10;
+    for (let i = headerList.length - 1; i >= 0; i--) {
+        if (headerList[i].line > line || headerList[i].level >= lastLevel) {
+            continue;
+        }
+        headers.push(headerList[i]);
+        lastLevel = headerList[i].level;
+    }
+    return headers;
+}
+
+function getHeaderList(content: string): {content: string, level: number, line: number}[] {
+    const lines = content.split(/\r?\n/);
+    const headerList = [];
+    for (let i = 0; i < lines.length; i++) {
+        const headerMatch = lines[i].match(/^(#+)\s+(.*)$/);
+        if (headerMatch) {
+            headerList.push({content: headerMatch[2], level: headerMatch[1].length, line: i});
+        }
+    }
+    return headerList;
+}
+
+
+// function getFlascardBodiesViaRegex(content: string): {body: string, startLine: number, endLine: number}[] {
+//     const regex = /^(?<!::\n)(?<!::\r\n)[ \t]*?delete\s*?\^(\d+)\s*?$/gmi;
+//     const matches = content.matchAll(regex);
+//     const flashcardBodies = [];
+//     for (const match of matches) {
+//         flashcardBodies.push({body: match[1], startLine: match.index, endLine: match.index + match[1].length});
+//     }
+//     return flashcardBodies;
+// }
