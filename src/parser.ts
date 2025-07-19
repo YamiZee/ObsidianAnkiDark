@@ -21,7 +21,7 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
 
     const { deck, tags: globalTags } = extractYamlProperties(content);
     globalTags.push('obsidian');
-    const deckName = deck || 'Default';
+    const deckName = deck || 'Obsidian';
     
     await ensureDeckExists(deckName);
 
@@ -90,10 +90,11 @@ function getFlashcardBodies(content: string): {body: string, startLine: number, 
         ){
             continue;
         }
+
         // Check card validity
         let cardBody = currentCard.join('\n');
-        cardBody = convertToAnkiCloze(cardBody);
-        if (!isClozeCard(cardBody) && !cardBody.includes('::')) {
+        if (!cardBody.includes('{') && !cardBody.includes('}') && !cardBody.includes('==') && !cardBody.includes('::')) {
+            // Not a card
             currentCard = [];
             continue;
         }
@@ -105,19 +106,12 @@ function getFlashcardBodies(content: string): {body: string, startLine: number, 
 
 function makeFlashcards(flashcardBodies: {body: string, startLine: number, endLine: number}[], deck: string | undefined, globalTags: string[]): Array<{ flashcard: Flashcard, startLine: number, endLine: number }> {
     const flashcardBlocks = [];
-    for (let {body, startLine, endLine} of flashcardBodies) {
-        let card = body;
-        // Generate card
-        card = convertToAnkiCloze(card); //TODO: this should probably be done after all other formatting
-        card = handleBrackets(card);
-        let isCloze = isClozeCard(card);
+    for (let {body: card, startLine, endLine} of flashcardBodies) {
+
         let id: number | undefined = undefined;
         let tags: string[] = [];
 
-        if (!isCloze && !card.includes('::')) {
-            // Not a card
-            continue;
-        }
+        card = handleBrackets(card);
 
         // Extract ID, and remove from card
         const idMatch = card.match(/(?:\s|\n)\^(\d+)(?:\s|$)/);
@@ -135,27 +129,35 @@ function makeFlashcards(flashcardBodies: {body: string, startLine: number, endLi
         tags = [...tags, ...globalTags];
 
         // Split card into fields
-        const {fields: fieldsArr, reverseCard} = splitIntoFields(card);
-        let fields: Record<string, string> = {};
-        if (isCloze) {
-            fields = { Text: fieldsArr[0] || '', 'Back Extra': fieldsArr[1] || '' };
-        } else {
-            fields = { Front: fieldsArr[0] || '', Back: fieldsArr[1] || '' };
-        }
+        let {fields, reverseCard} = splitIntoFields(card);
 
         // Format fields from markdown to html (such as bold, italic, strikethrough, codeblocks,  etc.)
-        for (const [fieldName, fieldContent] of Object.entries(fields)) {
-            fields[fieldName] = formatMarkdownToHtml(fieldContent);
+        for (let i = 0; i < fields.length; i++) {
+            fields[i] = formatFlashcardField(fields[i]);
+        }
+
+        const isCloze = isClozeCard(fields[0]);
+        
+        if (!isCloze && !card.includes('::')) {
+            // Not a card
+            continue;
+        }
+        
+        // TODO: make fields not hardcoded
+        let namedFields: Record<string, string> = {};
+        if (isCloze) {
+            namedFields = { Text: fields[0] || '', 'Back Extra': fields[1] || '' };
+        } else {
+            namedFields = { Front: fields[0] || '', Back: fields[1] || '' };
         }
 
         const flashcard = new Flashcard({
             id,
             deckName: deck || 'Default',
             type: isCloze ? FlashcardType.Cloze : reverseCard ? FlashcardType.Reversed : FlashcardType.Basic,
-            fields,
+            fields: namedFields,
             tags,
         });
-        // console.log(flashcard);
         flashcardBlocks.push({ flashcard, startLine, endLine });
     }
     return flashcardBlocks;
@@ -174,13 +176,7 @@ async function syncFlashcardsWithAnki(flashcardBlocks: Array<{ flashcard: Flashc
         let noteExists = false;
         if (flashcard.id !== undefined) {
             const findRes = await ankiConnectRequest('notesInfo', { notes: [flashcard.id] });
-            if (
-                findRes && findRes.result && 
-                Array.isArray(findRes.result) &&
-                findRes.result.length > 0 &&
-                findRes.result[0] &&
-                findRes.result[0].noteId !== undefined
-            ) {
+            if (findRes?.result?.[0]?.noteId !== undefined) {
                 noteExists = true;
             }
         }
@@ -284,6 +280,7 @@ async function deleteMarkedFlashcards(activeView: MarkdownView): Promise<number>
     return noteIds.length;
 }
 
+// TODO: use blocks instead of tracking curly braces manually
 function splitIntoFields(cardContent: string): {fields: string[], reverseCard: boolean} {
     const fields: string[] = [];
     let currentPart = '';
@@ -315,14 +312,16 @@ function splitIntoFields(cardContent: string): {fields: string[], reverseCard: b
     return {fields: fields.map(field => field.trim()), reverseCard};
 }
 
-function convertToAnkiCloze(content: string): string {
+function convertToAnkiCloze(content: string, insideCode: boolean, insideLatex: boolean): string {
     let result = content;
-
     // Match {cloze::hint} / {{{cloze::hint}}} and set the cloze number to the number of braces
     result = result.replace(/(\{+)(?!c\d+::)([^\{\}\n\r:]+)(?:::([^\{\}\n\r:]+))?(\}+)/g, (match, openBraces, cloze, hint, closeBraces) => {
         const openCount = openBraces.length;
         const closeCount = closeBraces.length;
         const clozeNum = Math.min(openCount, closeCount);
+        if (insideLatex && clozeNum == 1) {
+            return match;
+        }
         return hint ? `{{c${clozeNum}::${cloze}::${hint}}}` : `{{c${clozeNum}::${cloze}}}`;
     });
     // Match {1:cloze:hint} to {{c1::cloze::hint}}, or {1:cloze} to {{c1::cloze}}
@@ -330,11 +329,16 @@ function convertToAnkiCloze(content: string): string {
         return hint ? `{{c${num}::${cloze}::${hint}}}` : `{{c${num}::${cloze}}}`;
     });
     // ==cloze== to {{c1::cloze}}
-    result = result.replace(/==([^=]+)==/g, '{{c1::$1}}');
-
+    result = result.replace(/==(\S[^=]+)==/g, (match, cloze) => {
+        if (insideLatex || insideCode) {
+            return match;
+        }
+        return `{{c1::${cloze}}}`;
+    });
     return result;
 }
 
+// TODO: handle edge cases and possibly tag flashcards by link name
 function handleBrackets(content: string): string {
     let result = content;
     let bracketContent = '';
@@ -410,46 +414,28 @@ function getLatexBlocks(content: string): {start: number, end: number}[] {
     return latexBlocks;
 }
 
-function formatMarkdownToHtml(content: string): string {
+function formatFlashcardField(content: string): string {
     // Get all special blocks
     const codeBlocks = getCodeBlocks(content);
     const latexBlocks = getLatexBlocks(content);
-    
-    // Combine and sort all special blocks
-    const allBlocks = [...codeBlocks, ...latexBlocks].sort((a, b) => a.start - b.start);
+    const blockSequence = getBlockSequence(content, [codeBlocks, latexBlocks]);
 
-    // Ensure no blocks overlap
-    const filteredBlocks: {start: number, end: number}[] = [];
-    for (const block of allBlocks) {
-        if (filteredBlocks.length === 0 || block.start >= filteredBlocks[filteredBlocks.length - 1].end) {
-            filteredBlocks.push(block);
-        }
-        // If there is overlap, we silently skip this block
-    }
-
-    // Process content in segments, preserving special blocks
     let result = '';
-    let lastEnd = 0;
 
-    for (const block of filteredBlocks) {
-        // Process text before the block
-        if (block.start > lastEnd) {
-            const textSegment = content.slice(lastEnd, block.start);
-            result += applyMarkdownFormatting(textSegment);
+    for (const block of blockSequence) {
+        let formatted = block.content;
+        if (block.blockType == 0) {
+            formatted = applyMarkdownFormatting(block.content);
+            formatted = convertToAnkiCloze(formatted, false, false);
+        } else if (block.blockType == 1) {
+            formatted = applyBlockFormatting(block.content);
+            formatted = convertToAnkiCloze(formatted, true, false);
+        } else if (block.blockType == 2) {
+            formatted = applyBlockFormatting(block.content);
+            formatted = convertToAnkiCloze(formatted, false, true);
         }
-        
-        // Process blocks
-        const blockSegment = content.slice(block.start, block.end);
-        result += applyBlockFormatting(blockSegment);
-        lastEnd = block.end;
+        result += formatted;
     }
-
-    // Process any remaining text after the last block
-    if (lastEnd < content.length) {
-        const textSegment = content.slice(lastEnd);
-        result += applyMarkdownFormatting(textSegment);
-    }
-
     // Convert newlines to <br> tags at the end to avoid interfering with block detection
     return result.trim().replace(/\r?\n/g, '<br>');
 }
@@ -466,6 +452,58 @@ function applyBlockFormatting(text: string): string {
         .replace(/^`([\s\S]*)`$/g, (match, content) => `<code>${content.trim()}</code>`)
         .replace(/^\$\$([\s\S]*)\$\$$/g, (match, content) => `\\\[${content.trim()}\\\]`)
         .replace(/^\$([\s\S]*)\$$/g, (match, content) => `\\\(${content.trim()}\\\)`)
+}
+
+// Combines blocks, ensures no overlap, sorts them, notes their block type, and returns them
+function getBlockSequence(content: string, blocks: {start: number, end: number}[][]): {content: string, blockType: number}[] {
+
+    let allBlocks: {indices: {start: number, end: number}, blockType: number}[] = [];
+    
+    // Map each block array to include its type number and content
+    blocks.forEach((blockArray, index) => {
+        blockArray.forEach(indices => {
+            allBlocks.push({
+                indices: indices,
+                blockType: index + 1
+            });
+        });
+    });
+    
+    // Sort all blocks by start position
+    allBlocks = allBlocks.sort((a, b) => a.indices.start - b.indices.start);
+
+    // Ensure no blocks overlap
+    const filteredBlocks: {indices: {start: number, end: number}, blockType: number}[] = [];
+    for (const block of allBlocks) {
+        if (filteredBlocks.length === 0 || block.indices.start >= filteredBlocks[filteredBlocks.length - 1].indices.end) {
+            filteredBlocks.push(block);
+        }
+        // If there is overlap, we silently skip this block
+    }
+
+    let blockSequence: {content: string, blockType: number}[] = [];
+
+    // Process content in segments, preserving special blocks
+    let lastEnd = 0;
+
+    for (const block of filteredBlocks) {
+        // Append text before the block
+        if (block.indices.start > lastEnd) {
+            const textSegment = content.slice(lastEnd, block.indices.start);
+            blockSequence.push({content: textSegment, blockType: 0});
+        }
+        // Append the block
+        const blockSegment = content.slice(block.indices.start, block.indices.end);
+        blockSequence.push({content: blockSegment, blockType: block.blockType});
+        lastEnd = block.indices.end;
+    }
+    // Append any remaining text after the last block
+    if (lastEnd < content.length) {
+        const textSegment = content.slice(lastEnd);
+        blockSequence.push({content: textSegment, blockType: 0});
+    }
+
+    return blockSequence;
 }
 
 function getHeadersForLine(content: string, line: number): {content: string, level: number, line: number}[] {
