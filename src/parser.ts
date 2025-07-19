@@ -64,34 +64,6 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
 //     return flashcardBodies;
 // }
 
-function getCodeBlocks(content: string): {start: number, end: number}[] {
-    const blockRegex = /```[\s\S]*?```/g;
-    const inlineRegex = /`[^\n\r]*?`/g;
-    const blockMatches = content.matchAll(blockRegex);
-    const inlineMatches = content.matchAll(inlineRegex);
-    const codeBlocks = [];
-    for (const match of blockMatches) {
-        codeBlocks.push({start: match.index, end: match.index + match[0].length});
-    }
-    for (const match of inlineMatches) {
-        codeBlocks.push({start: match.index, end: match.index + match[0].length});
-    }
-    return codeBlocks;
-}
-function getLatexBlocks(content: string): {start: number, end: number}[] {
-    const blockRegex = /\$\$[\s\S]*?\$\$/g;
-    const inlineRegex = /\$[^\n\r]*?\$/g;
-    const blockMatches = content.matchAll(blockRegex);
-    const inlineMatches = content.matchAll(inlineRegex);
-    const latexBlocks = [];
-    for (const match of blockMatches) {
-        latexBlocks.push({start: match.index, end: match.index + match[0].length});
-    }
-    for (const match of inlineMatches) {
-        latexBlocks.push({start: match.index, end: match.index + match[0].length});
-    }
-    return latexBlocks;
-}
 
 function getFlashcardBodies(content: string): {body: string, startLine: number, endLine: number}[] {
     const lines = content.split(/\r?\n/);
@@ -175,8 +147,7 @@ function makeFlashcards(flashcardBodies: {body: string, startLine: number, endLi
 
         // Format fields from markdown to html (such as bold, italic, strikethrough, codeblocks,  etc.)
         for (const [fieldName, fieldContent] of Object.entries(fields)) {
-            fields[fieldName] = applyMarkdownFormatting(fieldContent);
-            // fields[fieldName] = formatMarkdownToHtml(fieldContent);
+            fields[fieldName] = formatMarkdownToHtml(fieldContent);
         }
 
         const flashcard = new Flashcard({
@@ -321,7 +292,6 @@ function splitIntoFields(cardContent: string): {fields: string[], reverseCard: b
     let inCurlyBraces = 0;
     let reverseCard = false;
 
-    console.log('cardContent:', cardContent);
     for (let i = 0; i < cardContent.length; i++) {
         if (cardContent[i] === ':' && cardContent[i + 1] === ':' && inCurlyBraces === 0) {
             // Found :: outside curly braces
@@ -343,7 +313,6 @@ function splitIntoFields(cardContent: string): {fields: string[], reverseCard: b
     if (currentPart) {
         fields.push(currentPart);
     }
-    console.log('fields:', fields);
     
     return {fields: fields.map(field => field.trim()), reverseCard};
 }
@@ -405,6 +374,44 @@ function extractYamlProperties(content: string): { deck?: string, tags: string[]
     return { deck: parsed.deck, tags };
 }
 
+// TODO: execute inline on non blocks
+function getCodeBlocks(content: string): {start: number, end: number}[] {
+    // const blockRegex = /```(\w*)\s*?\n(?:([\s\S]*?)\r?\n)??\s*?```/g; // overly complex
+    // const blockRegex = /```(\w*)[\s\S]*?```/g; // doesn't support escaped `
+    const blockRegex = /```(?<!\\```)(\w*)[\s\S]*?```(?<!\\```)/g; // optimal
+
+    const inlineRegex = /`(?<![`\\]`)[^`\r\n]*`(?!`)/g; // checks against being ``
+    // const inlineRegex = /`(?<!\\`)[^`\r\n]*`/g; // optimal if checked outside of blocks
+
+    const codeBlocks = [];
+    for (const match of content.matchAll(blockRegex)) {
+        codeBlocks.push({start: match.index, end: match.index + match[0].length});
+    }
+    for (const match of content.matchAll(inlineRegex)) {
+        codeBlocks.push({start: match.index, end: match.index + match[0].length});
+    }
+    return codeBlocks;
+}
+
+// TODO: execute inline on non blocks
+function getLatexBlocks(content: string): {start: number, end: number}[] {
+    // const complexRegex = /^\$\$\s*?\n(?:([\s\S]*?)\r?\n)??\s*?\$\$$/g; // overly complex
+    const blockRegex = /(?<!\\)\$\$[\s\S]*?\$\$(?<!\\\$\$)/g; // short and sweet
+
+    //const inlineRegex = /(?<!\$)\$[^\$\r\n]*\$(?!\$)/g; //replace, doesnt support escaped $ 
+    const inlineRegex = /\$(?<![\$\\]\$)(?!\$).*?\$(?<![\$\\]\$)(?!\$)/g; // handle escaped $ and reject $$ (slow but accurate)
+    // const inlineRegex = /(?<!\\)\$\S(?:.*?\S)?\$(?<!\\\$)/g; // handle escaped $, execute only on non $$ blocks (optimal after checks, use this)
+
+    const latexBlocks = [];
+    for (const match of content.matchAll(blockRegex)) {
+        latexBlocks.push({start: match.index, end: match.index + match[0].length});
+    }
+    for (const match of content.matchAll(inlineRegex)) {
+        latexBlocks.push({start: match.index, end: match.index + match[0].length});
+    }
+    return latexBlocks;
+}
+
 function formatMarkdownToHtml(content: string): string {
     // Get all special blocks
     const codeBlocks = getCodeBlocks(content);
@@ -422,11 +429,6 @@ function formatMarkdownToHtml(content: string): string {
         // If there is overlap, we silently skip this block
     }
 
-    if (filteredBlocks.length === 0) {
-        // If no special blocks, process the entire content
-        return applyMarkdownFormatting(content);
-    }
-
     // Process content in segments, preserving special blocks
     let result = '';
     let lastEnd = 0;
@@ -438,8 +440,9 @@ function formatMarkdownToHtml(content: string): string {
             result += applyMarkdownFormatting(textSegment);
         }
         
-        // Keep the block content unchanged
-        result += content.slice(block.start, block.end);
+        // Process blocks
+        const blockSegment = content.slice(block.start, block.end);
+        result += applyBlockFormatting(blockSegment);
         lastEnd = block.end;
     }
 
@@ -450,8 +453,7 @@ function formatMarkdownToHtml(content: string): string {
     }
 
     // Convert newlines to <br> tags at the end to avoid interfering with block detection
-    // return result.replace(/\r?\n/g, '<br>');
-    return result;
+    return result.trim().replace(/\r?\n/g, '<br>');
 }
 
 function applyMarkdownFormatting(text: string): string {
@@ -459,7 +461,11 @@ function applyMarkdownFormatting(text: string): string {
         .replace(/(\*\*|__)(.*?)\1/g, (match, bold, content) => `<b>${content}</b>`)
         .replace(/(\*|_)(.*?)\1/g, (match, italic, content) => `<i>${content}</i>`)
         .replace(/(\~\~)(.*?)\1/g, (match, strikethrough, content) => `<s>${content}</s>`)
-        .replace(/\`\`\`(\w*)\s*?\n([^\`]+?)\r?\n\s*?\`\`\`/g, (match, language, content) => `<pre><code>${content}</code></pre>`)
-        .replace(/(\`)(.+?)\1/g, (match, code, content) => `<pre><code>${content}</code></pre>`)
-        .replace(/\r?\n/g, '<br>');
+}
+function applyBlockFormatting(text: string): string {
+    return text
+        .replace(/^```(\w*)([\s\S]*)```$/g, (match, language, content) => `<pre><code>${content.trim()}</code></pre>`)
+        .replace(/^`([\s\S]*)`$/g, (match, content) => `<code>${content.trim()}</code>`)
+        .replace(/^\$\$([\s\S]*)\$\$$/g, (match, content) => `\\\[${content.trim()}\\\]`)
+        .replace(/^\$([\s\S]*)\$$/g, (match, content) => `\\\(${content.trim()}\\\)`)
 }
