@@ -38,6 +38,30 @@ export default class MyPlugin extends Plugin {
 			
 		this.setupEditorObserver();
 
+		// Register markdown post processor to hide flashcard IDs in reading view
+		this.registerMarkdownPostProcessor((element) => {
+
+			// Find and remove all text nodes that match ^number pattern
+			const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
+
+			const nodesToFilter: Text[] = [];
+			let node: Text | null;
+			while (node = walker.nextNode() as Text) {
+				if (!node.textContent) continue;
+				// Filter out footnote lines
+				if (node.textContent?.match(/\^[0-9]+/)) {
+					nodesToFilter.push(node);
+                }
+			}
+			nodesToFilter.forEach(n => {
+				let parentEl = n.parentElement;
+				if (parentEl) {
+					const html = parentEl.innerHTML;
+					parentEl.innerHTML = html.replace(/(<br>)?\s*\^[0-9]+/g, '');
+				}
+			});
+		});
+
 		this.addCommand({
 			id: 'highlight-flashcards',
 			name: 'Highlight Flashcard Lines',
@@ -170,22 +194,22 @@ class SampleSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Auto-highlight Flashcards')
-			.setDesc('Automatically highlight flashcard lines when scrolling or editing')
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.enableEditorObserver)
-				.onChange(async (value) => {
-					this.plugin.settings.enableEditorObserver = value;
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
 			.setName('Default Deck')
 			.setDesc('The default deck name for new flashcards (can be overridden in YAML frontmatter)')
 			.addText(text => text
 				.setValue(this.plugin.settings.defaultDeck)
 				.onChange(async (value) => {
 					this.plugin.settings.defaultDeck = value || DEFAULT_SETTINGS.defaultDeck;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Auto-highlight Flashcards')
+			.setDesc('Automatically highlight flashcard lines when scrolling or editing')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.enableEditorObserver)
+				.onChange(async (value) => {
+					this.plugin.settings.enableEditorObserver = value;
 					await this.plugin.saveSettings();
 				}));
 
