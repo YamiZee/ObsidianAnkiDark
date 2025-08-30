@@ -99,9 +99,9 @@ export default class MyPlugin extends Plugin {
 		//this.highlightFlashcardLines(this.currentFlashcardLines);
 		
 		// Highlight partial content
-					let renderedContent = this.getRenderedContent()?.content || '';
-			let flashcardLines = getFlashcardLines(renderedContent);
-			highlightFlashcardLines(this.app, flashcardLines, this.settings);
+		let renderedContent = this.getRenderedContent()?.content || '';
+		let flashcardLines = getFlashcardLines(renderedContent);
+		highlightFlashcardLines(this.app, flashcardLines, this.settings);
 
 		if (this.currentFlashcardLines.length > 0) {
 			new Notice('Flashcard lines highlighted!');
@@ -124,11 +124,7 @@ export default class MyPlugin extends Plugin {
 
 		// Create new observer
 		this.editorObserver = new MutationObserver((mutations) => {
-			// add setting
 			if (this.settings.enableEditorObserver) {
-				console.log('editorObserver');
-				console.log('mutations:', mutations);
-
 				let rendered = this.getRenderedContent();
 				highlightFlashcardLines(this.app, getFlashcardLines(rendered?.content || ''), this.settings);
 				//this.highlightFlashcardLines(this.currentFlashcardLines);
