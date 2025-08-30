@@ -1,21 +1,46 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
-import { ankify } from './src/parser';
+import { ankify, getFlashcardLines } from './src/parser';
+import { Flashcard } from './src/models';
+import { highlightFlashcardLines } from './src/highlighter';
 
 interface MyPluginSettings {
 	mySetting: string;
 	cardsAdded: number;
+	enableEditorObserver: boolean;
+	showHighlighterRibbon: boolean;
+	firstHighlightColor: string;
+	secondHighlightColor: string;
+	firstHighlightOpacity: number;
+	secondHighlightOpacity: number;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
 	mySetting: 'default',
-	cardsAdded: 0
+	cardsAdded: 0,
+	enableEditorObserver: false,
+	showHighlighterRibbon: true,
+	firstHighlightColor: '#002255',
+	secondHighlightColor: '#111155',
+	firstHighlightOpacity: 0.5,
+	secondHighlightOpacity: 0.5
 }
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
+	private currentFlashcardLines: Array<{ flashcard: Flashcard, startLine: number, endLine: number }> = [];
+	private editorObserver: MutationObserver | null = null;
+	public highlighterRibbonIconEl: HTMLElement | null = null;
 
 	async onload() {
 		await this.loadSettings();
+			
+		this.setupEditorObserver();
+
+		this.addCommand({
+			id: 'highlight-flashcards',
+			name: 'Highlight Flashcard Lines',
+			callback: () => this.highlightCommand()
+		});
 		
 		// Add ribbon icon for reading current file
 		this.addRibbonIcon('file-text', 'Ankify', async () => {
@@ -34,6 +59,13 @@ export default class MyPlugin extends Plugin {
 			}
 		});
 
+		// Add ribbon icon if enabled in settings
+		if (this.settings.showHighlighterRibbon) {
+			this.highlighterRibbonIconEl = this.addRibbonIcon('highlighter', 'Highlight Lines', () => {
+				this.highlightCommand();
+			});
+		}
+
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBarItemEl = this.addStatusBarItem();
 		statusBarItemEl.setText(`${this.settings.cardsAdded} cards.`);
@@ -43,7 +75,11 @@ export default class MyPlugin extends Plugin {
 	}
 
 	onunload() {
-
+		// Clean up the observer when the plugin is unloaded
+		if (this.editorObserver) {
+			this.editorObserver.disconnect();
+			this.editorObserver = null;
+		}
 	}
 
 	async loadSettings() {
@@ -52,6 +88,73 @@ export default class MyPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	highlightCommand(): void {
+		// Store fully processed flashcard lines
+		let fullContent = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor.getValue() || '';
+		this.currentFlashcardLines = getFlashcardLines(fullContent);
+		//this.highlightFlashcardLines(this.currentFlashcardLines);
+		
+		// Highlight partial content
+					let renderedContent = this.getRenderedContent()?.content || '';
+			let flashcardLines = getFlashcardLines(renderedContent);
+			highlightFlashcardLines(this.app, flashcardLines, this.settings);
+
+		if (this.currentFlashcardLines.length > 0) {
+			new Notice('Flashcard lines highlighted!');
+		} else {
+			new Notice('No flashcard lines found!');
+		}
+	}
+
+	setupEditorObserver(): void {
+		// Clean up any existing observer
+		if (this.editorObserver) {
+			this.editorObserver.disconnect();
+			this.editorObserver = null;
+		}
+
+		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!activeView) return;
+		const editorEl = activeView.contentEl.querySelector('.cm-editor');
+		if (!editorEl) return;
+
+		// Create new observer
+		this.editorObserver = new MutationObserver((mutations) => {
+			// add setting
+			if (this.settings.enableEditorObserver) {
+				console.log('editorObserver');
+				console.log('mutations:', mutations);
+
+				let rendered = this.getRenderedContent();
+				highlightFlashcardLines(this.app, getFlashcardLines(rendered?.content || ''), this.settings);
+				//this.highlightFlashcardLines(this.currentFlashcardLines);
+			}
+		});
+
+		// Start observing
+		this.editorObserver.observe(editorEl, {
+			childList: true,
+			subtree: true,
+			characterData: true
+		});
+	}
+
+	private getRenderedContent(): { content: string } | null {
+		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!activeView) return null;
+
+		const editorEl = activeView.contentEl.querySelector('.cm-editor');
+		if (!editorEl) return null;
+
+		const renderedLines = Array.from(editorEl.querySelectorAll('.cm-line'));
+		const visibleContent = renderedLines.map(line => line.textContent || '').join('\n');
+
+		return {
+			content: visibleContent,
+			// startLineNumber: 0
+		};
 	}
 }
 
@@ -69,14 +172,80 @@ class SampleSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+			.setName('Auto-highlight Flashcards')
+			.setDesc('Automatically highlight flashcard lines when scrolling or editing')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.enableEditorObserver)
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					this.plugin.settings.enableEditorObserver = value;
 					await this.plugin.saveSettings();
 				}));
+
+		new Setting(containerEl)
+			.setName('Show Highlight Button')
+			.setDesc('Show the highlighter button in the left sidebar')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.showHighlighterRibbon)
+				.onChange(async (value) => {
+					this.plugin.settings.showHighlighterRibbon = value;
+					await this.plugin.saveSettings();
+					
+					// Update ribbon icon visibility
+					if (value && !this.plugin.highlighterRibbonIconEl) {
+						this.plugin.highlighterRibbonIconEl = this.plugin.addRibbonIcon('highlighter', 'Highlight Lines', () => {
+							this.plugin.highlightCommand();
+						});
+					} else if (!value && this.plugin.highlighterRibbonIconEl) {
+						this.plugin.highlighterRibbonIconEl.remove();
+						this.plugin.highlighterRibbonIconEl = null;
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName('First Highlight Color')
+			.setDesc('Color and opacity for odd-numbered flashcards')
+			.addColorPicker(colorpicker => colorpicker
+				.setValue(this.plugin.settings.firstHighlightColor)
+				.onChange(async (value) => {
+					this.plugin.settings.firstHighlightColor = value;
+					await this.plugin.saveSettings();
+				}))
+			.addSlider(slider => slider
+				.setLimits(0, 1, 0.1)
+				.setValue(this.plugin.settings.firstHighlightOpacity)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.firstHighlightOpacity = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Second Highlight Color')
+			.setDesc('Color and opacity for even-numbered flashcards')
+			.addColorPicker(colorpicker => colorpicker
+				.setValue(this.plugin.settings.secondHighlightColor)
+				.onChange(async (value) => {
+					this.plugin.settings.secondHighlightColor = value;
+					await this.plugin.saveSettings();
+				}))
+			.addSlider(slider => slider
+				.setLimits(0, 1, 0.1)
+				.setValue(this.plugin.settings.secondHighlightOpacity)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.secondHighlightOpacity = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// new Setting(containerEl)
+		// 	.setName('Setting #1')
+		// 	.setDesc('It\'s a secret')
+		// 	.addText(text => text
+		// 		.setPlaceholder('Enter your secret')
+		// 		.setValue(this.plugin.settings.mySetting)
+		// 		.onChange(async (value) => {
+		// 			this.plugin.settings.mySetting = value;
+		// 			await this.plugin.saveSettings();
+		// 		}));
 	}
 }

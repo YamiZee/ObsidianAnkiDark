@@ -3,6 +3,11 @@ import * as yaml from 'js-yaml';
 import { addNotesToAnki, updateNotesInAnki, ankiConnectRequest, checkAnkiConnect, ensureDefaultModelsExist, ensureDeckExists, processImagesForAnki } from './ankiconnect';
 import { Flashcard, FlashcardType } from './models';
 
+export function getFlashcardLines(content: string): Array<{ flashcard: Flashcard, startLine: number, endLine: number }> {
+    const flashcardBodies = getFlashcardBodies(content);
+    return makeFlashcards(flashcardBodies, "", []);
+}
+
 export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpdated?: number, cardsDeleted?: number }> {
     // Ensure AnkiConnect is available
     if (!(await checkAnkiConnect())) {
@@ -32,9 +37,13 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
     // Extract tags from headers and apply to flashcards
     for (const block of flashcardBlocks) {
         const headers = getHeadersForLine(content, block.startLine);
-        const headerTags = headers.flatMap(h => (h.content.match(/\s(#[\w-]+)/g) || []));
+        for (const h of headers) {
+            console.log(h.content.match(/(?:^|\s)(#[\w-]+)/g))
+        }
+        const headerTags = headers.flatMap(h => (h.content.match(/#(?<=(?:^|\s)#)([\w-]+)/g) || []));
+        const headerLinks = headers.flatMap(h => (h.content.match(/(?<=\[\[)(?<!!\[\[)([^\[\]\r\n]+)(?=\]\])/g) || []));
         // Add header tags to the flashcard's tags, avoiding duplicates
-        block.flashcard.tags = Array.from(new Set([...(block.flashcard.tags || []), ...headerTags]));
+        block.flashcard.tags = Array.from(new Set([...(block.flashcard.tags || []), ...headerTags, ...headerLinks]));
     }
 
     // Set source link for all flashcards
@@ -62,7 +71,7 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
     return { cardsAdded, cardsUpdated, cardsDeleted };
 }
 
-function getFlashcardBodies(content: string): {body: string, startLine: number, endLine: number}[] {
+export function getFlashcardBodies(content: string): {body: string, startLine: number, endLine: number}[] {
     const lines = content.split(/\r?\n/);
     let currentCard: string[] = [];
     let startLine = 0;
@@ -111,8 +120,6 @@ function makeFlashcards(flashcardBodies: {body: string, startLine: number, endLi
         let id: number | undefined = undefined;
         let tags: string[] = [];
 
-        card = handleBrackets(card);
-
         // Extract ID, and remove from card
         const idMatch = card.match(/(?:\s|\n)\^(\d+)(?:\s|$)/);
         if (idMatch) {
@@ -120,13 +127,20 @@ function makeFlashcards(flashcardBodies: {body: string, startLine: number, endLi
             card = card.replace(/(?:\s|\n)\^(\d+)(?:\s|$)/, '');
         }
 
+        // Extract [[link]] tags, and remove from card
+        let linkTags: string[] = [];
+        card = card.replace(/\[\[(?<!!\[\[)([^\[\]\r\n]+)\]\]/g, (match, link) => {
+            linkTags.push(link);
+            return link;
+        });
+
         // Extract tags, and remove from card
         const tagMatches = card.match(/#[\w-]+/g);
         if (tagMatches) {
             tags = tagMatches;
             card = card.replace(/#[\w-]+/g, '').trim();
         }
-        tags = [...tags, ...globalTags];
+        tags = [...tags, ...linkTags, ...globalTags];
 
         // Split card into fields
         let {fields, reverseCard} = splitIntoFields(card);
