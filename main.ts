@@ -21,10 +21,10 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 	enableEditorObserver: false,
 	showHighlighterRibbon: true,
 	defaultDeck: 'Obsidian',
-	firstHighlightColor: '#002255',
-	secondHighlightColor: '#111155',
-	firstHighlightOpacity: 0.5,
-	secondHighlightOpacity: 0.5
+	firstHighlightColor: '#e0c2ff',
+	secondHighlightColor: '#a77ea9',
+	firstHighlightOpacity: 0.1,
+	secondHighlightOpacity: 0.1
 }
 
 export default class MyPlugin extends Plugin {
@@ -242,7 +242,7 @@ class SampleSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}))
 			.addSlider(slider => slider
-				.setLimits(0, 1, 0.1)
+				.setLimits(0, 1, 0.05)
 				.setValue(this.plugin.settings.firstHighlightOpacity)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
@@ -260,7 +260,7 @@ class SampleSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}))
 			.addSlider(slider => slider
-				.setLimits(0, 1, 0.1)
+				.setLimits(0, 1, 0.05)
 				.setValue(this.plugin.settings.secondHighlightOpacity)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
