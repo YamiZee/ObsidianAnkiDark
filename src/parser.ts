@@ -8,7 +8,7 @@ export function getFlashcardLines(content: string): Array<{ flashcard: Flashcard
     return makeFlashcards(flashcardBodies, "", []);
 }
 
-export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpdated?: number, cardsDeleted?: number }> {
+export async function ankify(app: App, defaultDeck: string): Promise<{ cardsAdded?: number, cardsUpdated?: number, cardsDeleted?: number }> {
     // Ensure AnkiConnect is available
     if (!(await checkAnkiConnect())) {
         return {};
@@ -26,12 +26,11 @@ export async function ankify(app: App): Promise<{ cardsAdded?: number, cardsUpda
 
     const { deck, tags: globalTags } = extractYamlProperties(content);
     globalTags.push('obsidian');
-    const deckName = deck || 'Obsidian';
+    const deckName = deck || defaultDeck;
     
     await ensureDeckExists(deckName);
 
     const flashcardBodies = getFlashcardBodies(content);
-    
     const flashcardBlocks = makeFlashcards(flashcardBodies, deckName, globalTags);
 
     // Extract tags from headers and apply to flashcards

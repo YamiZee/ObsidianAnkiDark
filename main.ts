@@ -8,6 +8,7 @@ interface MyPluginSettings {
 	cardsAdded: number;
 	enableEditorObserver: boolean;
 	showHighlighterRibbon: boolean;
+	defaultDeck: string;
 	firstHighlightColor: string;
 	secondHighlightColor: string;
 	firstHighlightOpacity: number;
@@ -19,6 +20,7 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 	cardsAdded: 0,
 	enableEditorObserver: false,
 	showHighlighterRibbon: true,
+	defaultDeck: 'Obsidian',
 	firstHighlightColor: '#002255',
 	secondHighlightColor: '#111155',
 	firstHighlightOpacity: 0.5,
@@ -44,7 +46,7 @@ export default class MyPlugin extends Plugin {
 		
 		// Add ribbon icon for reading current file
 		this.addRibbonIcon('file-text', 'Ankify', async () => {
-			const info = await ankify(this.app);
+			const info = await ankify(this.app, this.settings.defaultDeck);
 			if (info && typeof info.cardsAdded === 'number' && typeof info.cardsUpdated === 'number') {
 				if (info.cardsAdded > 0 || info.cardsUpdated > 0) {
 					new Notice(`Note Ankified! ${info.cardsAdded} cards added, ${info.cardsUpdated} cards updated!`);
@@ -182,6 +184,16 @@ class SampleSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
+			.setName('Default Deck')
+			.setDesc('The default deck name for new flashcards (can be overridden in YAML frontmatter)')
+			.addText(text => text
+				.setValue(this.plugin.settings.defaultDeck)
+				.onChange(async (value) => {
+					this.plugin.settings.defaultDeck = value || DEFAULT_SETTINGS.defaultDeck;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
 			.setName('Show Highlight Button')
 			.setDesc('Show the highlighter button in the left sidebar')
 			.addToggle(toggle => toggle
@@ -199,6 +211,25 @@ class SampleSettingTab extends PluginSettingTab {
 						this.plugin.highlighterRibbonIconEl.remove();
 						this.plugin.highlighterRibbonIconEl = null;
 					}
+				}));
+
+		new Setting(containerEl)
+			.setName('Highlight Colors')
+			.setDesc('Customize the colors used for highlighting')
+			.addButton(button => button
+				.setButtonText('Reset to Defaults')
+				.onClick(async () => {
+					// Reset colors and opacities to defaults
+					this.plugin.settings.firstHighlightColor = DEFAULT_SETTINGS.firstHighlightColor;
+					this.plugin.settings.secondHighlightColor = DEFAULT_SETTINGS.secondHighlightColor;
+					this.plugin.settings.firstHighlightOpacity = DEFAULT_SETTINGS.firstHighlightOpacity;
+					this.plugin.settings.secondHighlightOpacity = DEFAULT_SETTINGS.secondHighlightOpacity;
+					await this.plugin.saveSettings();
+					
+					// Force refresh the settings UI
+					this.display();
+					
+					new Notice('Colors reset to defaults');
 				}));
 
 		new Setting(containerEl)
