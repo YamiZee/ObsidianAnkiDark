@@ -88,11 +88,11 @@ export function getFlashcardBodies(content: string): {body: string, startLine: n
         } else if (line.trim().startsWith('$$')) {
             inLatexBlock = !inLatexBlock;
         }
-        if (line.trim().endsWith(':') || inCodeBlock || inLatexBlock ||
+        if (inCodeBlock || inLatexBlock || //line.trim().endsWith(':') ||
             (i + 1 < lines.length && (
                 lines[i+1].trim().startsWith('::') || 
                 lines[i+1].trim().startsWith('^') ||
-                lines[i+1].trim().startsWith('- ') ||
+                //lines[i+1].trim().startsWith('- ') ||
                 /^\d+\.\s/.test(lines[i+1].trim())
             ))
         ){
@@ -147,6 +147,7 @@ function makeFlashcards(flashcardBodies: {body: string, startLine: number, endLi
         // Format fields from markdown to html (such as bold, italic, strikethrough, codeblocks,  etc.)
         for (let i = 0; i < fields.length; i++) {
             fields[i] = formatFlashcardField(fields[i]);
+            fields[i] = fields[i].replace(/^ *- +/g, '');
         }
 
         const isCloze = isClozeCard(fields[0]);
