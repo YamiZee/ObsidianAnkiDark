@@ -23,8 +23,8 @@ export function highlightLines(app: App, startLine: number, endLine: number, col
     for (let i = startLine; i <= endLine; i++) {
         const lineEl = lineEls[i];
         if (lineEl) {
+            (lineEl as HTMLElement).classList.add('anki-dark-line');
             (lineEl as HTMLElement).style.backgroundColor = hexToRgba(color, opacity);
-            (lineEl as HTMLElement).style.opacity = '1';
         }
     }
 }

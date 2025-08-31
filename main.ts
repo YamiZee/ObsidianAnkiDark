@@ -13,6 +13,9 @@ interface MyPluginSettings {
 	secondHighlightColor: string;
 	firstHighlightOpacity: number;
 	secondHighlightOpacity: number;
+	clozeHighlightColor: string;
+	clozeHighlightOpacity: number;
+	customCSS: string;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
@@ -22,9 +25,18 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 	showHighlighterRibbon: true,
 	defaultDeck: 'Obsidian',
 	firstHighlightColor: '#e0c2ff',
-	secondHighlightColor: '#a77ea9',
+	secondHighlightColor: '#c9b3db',
 	firstHighlightOpacity: 0.1,
-	secondHighlightOpacity: 0.1
+	secondHighlightOpacity: 0.05,
+	clozeHighlightColor: '#a77ea9',
+	clozeHighlightOpacity: 0.25,
+	customCSS: `.anki-dark-cloze {
+ background-color: var(--cloze-color);
+ border-radius: 4px;
+ padding: 0 4px;
+}
+.anki-dark-line {
+}`
 }
 
 export default class MyPlugin extends Plugin {
@@ -37,28 +49,37 @@ export default class MyPlugin extends Plugin {
 		await this.loadSettings();
 			
 		this.setupEditorObserver();
+		this.updateStyles();
 
 		// Register markdown post processor to hide flashcard IDs in reading view
 		this.registerMarkdownPostProcessor((element) => {
-
-			// Find and remove all text nodes that match ^number pattern
 			const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
 
-			const nodesToFilter: Text[] = [];
+			const parentElements: Set<HTMLElement> = new Set();
+			const footnotesToFilter: Text[] = [];
+			const clozeRegex = /\{+(\S[^}:]*)(?:::[^}:]*)?\}(?<=\S\})\}*/g;
+			
 			let node: Text | null;
 			while (node = walker.nextNode() as Text) {
 				if (!node.textContent) continue;
-				// Filter out footnote lines
+				// Highlight clozes
+				if (node.parentElement) {
+					parentElements.add(node.parentElement);
+				}
+				// Filter out ^number footnote lines
 				if (node.textContent?.match(/\^[0-9]+/)) {
-					nodesToFilter.push(node);
+					footnotesToFilter.push(node);
                 }
 			}
-			nodesToFilter.forEach(n => {
+			footnotesToFilter.forEach(n => {
 				let parentEl = n.parentElement;
 				if (parentEl) {
 					const html = parentEl.innerHTML;
 					parentEl.innerHTML = html.replace(/(<br>)?\s*\^[0-9]+/g, '');
 				}
+			});
+			parentElements.forEach(p => {
+				p.innerHTML = p.innerHTML.replace(clozeRegex, `<span class="anki-dark-cloze">$1</span>`);
 			});
 		});
 
@@ -114,6 +135,42 @@ export default class MyPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	updateStyles() {
+		// Remove existing style element if it exists
+		const existingStyle = document.getElementById('obsidian-anki-dark-styles');
+		if (existingStyle) {
+			existingStyle.remove();
+		}
+
+		// Create and add new style element
+		const styleEl = document.createElement('style');
+		styleEl.id = 'obsidian-anki-dark-styles';
+		
+		// Set CSS variables for dynamic colors
+		const clozeColor = this.settings.clozeHighlightColor + Math.round(this.settings.clozeHighlightOpacity * 255).toString(16).padStart(2, '0');
+		const line1Color = this.settings.firstHighlightColor + Math.round(this.settings.firstHighlightOpacity * 255).toString(16).padStart(2, '0');
+		const line2Color = this.settings.secondHighlightColor + Math.round(this.settings.secondHighlightOpacity * 255).toString(16).padStart(2, '0');
+		styleEl.textContent = `
+			/* Plugin UI styles */
+			.obsidian-anki-dark-css-editor {
+				min-height: 200px;
+				width: 200%;
+				font-family: var(--font-monospace);
+			}
+
+			/* Dynamic styles */
+			:root {
+				--cloze-color: ${clozeColor};
+				--line1-color: ${line1Color};
+				--line2-color: ${line2Color};
+			}
+
+			/* User custom styles */
+			${this.settings.customCSS}
+		`;
+		document.head.appendChild(styleEl);
 	}
 
 	highlightCommand(): void {
@@ -244,7 +301,10 @@ class SampleSettingTab extends PluginSettingTab {
 					this.plugin.settings.secondHighlightColor = DEFAULT_SETTINGS.secondHighlightColor;
 					this.plugin.settings.firstHighlightOpacity = DEFAULT_SETTINGS.firstHighlightOpacity;
 					this.plugin.settings.secondHighlightOpacity = DEFAULT_SETTINGS.secondHighlightOpacity;
+					this.plugin.settings.clozeHighlightColor = DEFAULT_SETTINGS.clozeHighlightColor;
+					this.plugin.settings.clozeHighlightOpacity = DEFAULT_SETTINGS.clozeHighlightOpacity;
 					await this.plugin.saveSettings();
+					this.plugin.updateStyles();
 					
 					// Force refresh the settings UI
 					this.display();
@@ -260,6 +320,7 @@ class SampleSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.firstHighlightColor = value;
 					await this.plugin.saveSettings();
+					this.plugin.updateStyles();
 				}))
 			.addSlider(slider => slider
 				.setLimits(0, 1, 0.05)
@@ -268,6 +329,7 @@ class SampleSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.firstHighlightOpacity = value;
 					await this.plugin.saveSettings();
+					this.plugin.updateStyles();
 				}));
 
 		new Setting(containerEl)
@@ -278,6 +340,7 @@ class SampleSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.secondHighlightColor = value;
 					await this.plugin.saveSettings();
+					this.plugin.updateStyles();
 				}))
 			.addSlider(slider => slider
 				.setLimits(0, 1, 0.05)
@@ -286,6 +349,49 @@ class SampleSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.secondHighlightOpacity = value;
 					await this.plugin.saveSettings();
+					this.plugin.updateStyles();
+				}));
+
+		new Setting(containerEl)
+			.setName('Cloze Highlight Color')
+			.setDesc('Color and opacity for cloze deletions in reading view')
+			.addColorPicker(colorpicker => colorpicker
+				.setValue(this.plugin.settings.clozeHighlightColor)
+				.onChange(async (value) => {
+					this.plugin.settings.clozeHighlightColor = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateStyles();
+				}))
+			.addSlider(slider => slider
+				.setLimits(0, 1, 0.05)
+				.setValue(this.plugin.settings.clozeHighlightOpacity)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.clozeHighlightOpacity = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateStyles();
+				}));
+
+		new Setting(containerEl)
+			.setName('Custom CSS')
+			.setDesc('Customize the appearance of plugin elements')
+			.addTextArea(text => text
+				.setValue(this.plugin.settings.customCSS)
+				.setPlaceholder('Enter custom CSS here')
+				.onChange(async (value) => {
+					this.plugin.settings.customCSS = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateStyles();
+				})
+				.inputEl.addClass('obsidian-anki-dark-css-editor'))
+			.addExtraButton(button => button
+				.setIcon('reset')
+				.setTooltip('Reset to default CSS')
+				.onClick(async () => {
+					this.plugin.settings.customCSS = DEFAULT_SETTINGS.customCSS;
+					await this.plugin.saveSettings();
+					this.plugin.updateStyles();
+					this.display();
 				}));
 
 		// new Setting(containerEl)
