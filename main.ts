@@ -5,7 +5,7 @@ import { livePreviewPostProcessor, markdownPostProcessor } from './src/highlight
 interface MyPluginSettings {
 	mySetting: string;
 	cardsAdded: number;
-	enableEditorObserver: boolean;
+	enableHighlighter: boolean;
 	showHighlighterRibbon: boolean;
 	defaultDeck: string;
 	firstHighlightColor: string;
@@ -20,7 +20,7 @@ interface MyPluginSettings {
 const DEFAULT_SETTINGS: MyPluginSettings = {
 	mySetting: 'default',
 	cardsAdded: 0,
-	enableEditorObserver: false,
+	enableHighlighter: false,
 	showHighlighterRibbon: true,
 	defaultDeck: 'Obsidian',
 	firstHighlightColor: '#e0c2ff',
@@ -53,15 +53,9 @@ export default class MyPlugin extends Plugin {
 		this.updateStyles();
 
 		// Editor extension to highlight flashcard lines
-		this.registerEditorExtension(livePreviewPostProcessor());
+		this.registerEditorExtension(livePreviewPostProcessor(this.settings));
 		// Reading view post processor to hide flashcard IDs and highlight clozes
-		this.registerMarkdownPostProcessor(markdownPostProcessor);
-
-		this.addCommand({
-			id: 'highlight-flashcards',
-			name: 'Highlight Flashcard Lines',
-			callback: () => this.highlightCommand()
-		});
+		this.registerMarkdownPostProcessor((el) => markdownPostProcessor(el, this.settings));
 		
 		// Add ribbon icon for reading current file
 		this.addRibbonIcon('file-text', 'Ankify', async () => {
@@ -80,11 +74,19 @@ export default class MyPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'highlight-flashcards',
+			name: 'Toggle Flashcard Highlighter',
+			callback: () => this.highlightCommand()
+		});
+
 		// Add ribbon icon if enabled in settings
 		if (this.settings.showHighlighterRibbon) {
-			this.highlighterRibbonIconEl = this.addRibbonIcon('highlighter', 'Highlight Lines', () => {
-				this.highlightCommand();
-			});
+			this.highlighterRibbonIconEl = this.addRibbonIcon(
+				'highlighter',
+				`Anki Highlighter: ${this.settings.enableHighlighter ? 'On' : 'Off'}`,
+				async () => this.highlightCommand()
+			);
 		}
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
@@ -142,7 +144,25 @@ export default class MyPlugin extends Plugin {
 		document.head.appendChild(styleEl);
 	}
 
-	highlightCommand(): void {
+	refreshAllViews(): void {
+		this.app.workspace.iterateAllLeaves(leaf => {
+			if (leaf.view instanceof MarkdownView) {
+				leaf.view.previewMode?.rerender(true);
+				leaf.view.editor?.refresh();
+			}
+		});
+	}
+
+	async highlightCommand(): Promise<void> {
+		this.settings.enableHighlighter = !this.settings.enableHighlighter;
+		await this.saveSettings();
+		if (this.highlighterRibbonIconEl) {
+			this.highlighterRibbonIconEl.ariaLabel = `Anki Highlighter: ${this.settings.enableHighlighter ? 'On' : 'Off'}`;
+		}
+		new Notice(`Flashcard highlighting ${this.settings.enableHighlighter ? 'Enabled' : 'Disabled'}`);
+
+		this.refreshAllViews();
+		this.app.workspace.updateOptions();
 	}
 }
 
@@ -170,13 +190,14 @@ class SampleSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Auto-highlight Flashcards')
-			.setDesc('Automatically highlight flashcard lines when scrolling or editing')
+			.setName('Highlight Flashcards')
+			.setDesc('Highlight flashcard lines and clozes')
 			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.enableEditorObserver)
+				.setValue(this.plugin.settings.enableHighlighter)
 				.onChange(async (value) => {
-					this.plugin.settings.enableEditorObserver = value;
+					this.plugin.settings.enableHighlighter = value;
 					await this.plugin.saveSettings();
+					this.plugin.refreshAllViews();
 				}));
 
 		new Setting(containerEl)
@@ -190,9 +211,11 @@ class SampleSettingTab extends PluginSettingTab {
 					
 					// Update ribbon icon visibility
 					if (value && !this.plugin.highlighterRibbonIconEl) {
-						this.plugin.highlighterRibbonIconEl = this.plugin.addRibbonIcon('highlighter', 'Highlight Lines', () => {
-							this.plugin.highlightCommand();
-						});
+						this.plugin.highlighterRibbonIconEl = this.plugin.addRibbonIcon(
+							'highlighter', 
+							`Anki Highlighter: ${this.plugin.settings.enableHighlighter ? 'On' : 'Off'}`, 
+							() => { this.plugin.highlightCommand(); }
+						);
 					} else if (!value && this.plugin.highlighterRibbonIconEl) {
 						this.plugin.highlighterRibbonIconEl.remove();
 						this.plugin.highlighterRibbonIconEl = null;

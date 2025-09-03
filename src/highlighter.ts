@@ -2,7 +2,7 @@ import { ViewPlugin, DecorationSet, Decoration, ViewUpdate, EditorView } from '@
 import { Range } from '@codemirror/state';
 import { getFlashcardLines } from './parser';
 
-export function markdownPostProcessor(element: HTMLElement) {
+export function markdownPostProcessor(element: HTMLElement, settings: any) {
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
 
     const parentElements: Set<HTMLElement> = new Set();
@@ -29,11 +29,15 @@ export function markdownPostProcessor(element: HTMLElement) {
         }
     });
     parentElements.forEach(p => {
-        p.innerHTML = p.innerHTML.replace(clozeRegex, `<span class="anki-dark-cloze reading-view">$1</span>`);
+        if (settings.enableHighlighter) {
+            p.innerHTML = p.innerHTML.replace(clozeRegex, `<span class="anki-dark-cloze reading-view">$1</span>`);
+        }else{
+            p.innerHTML = p.innerHTML.replace(clozeRegex, `$1`);
+        }
     });
 }
 
-export function livePreviewPostProcessor() {
+export function livePreviewPostProcessor(settings: any) {
     return ViewPlugin.fromClass(class {
         decorations: DecorationSet;
 
@@ -48,6 +52,9 @@ export function livePreviewPostProcessor() {
         }
 
         buildDecorations(view: EditorView) {
+            if (!settings.enableHighlighter) {
+                return Decoration.none;
+            }
             const decorations: Range<Decoration>[] = [];
             
             const clozeRegex = /\{+(\S[^}:]*)(?:::[^}:]*)?\}(?<=\S\})\}*/g;
