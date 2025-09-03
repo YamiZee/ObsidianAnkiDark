@@ -1,7 +1,6 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
-import { ankify, getFlashcardLines } from './src/parser';
-import { Flashcard } from './src/models';
-import { highlightFlashcardLines } from './src/highlighter';
+import { ankify } from './src/parser';
+import { livePreviewPostProcessor, markdownPostProcessor } from './src/highlighter';
 
 interface MyPluginSettings {
 	mySetting: string;
@@ -30,58 +29,33 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 	secondHighlightOpacity: 0.05,
 	clozeHighlightColor: '#a77ea9',
 	clozeHighlightOpacity: 0.25,
-	customCSS: `.anki-dark-cloze {
+	customCSS: `.anki-dark-cloze.reading-view {
  background-color: var(--cloze-color);
  border-radius: 4px;
  padding: 0 4px;
 }
-.anki-dark-line {
+.anki-dark-cloze.live-preview {
+}
+.anki-dark-line.odds {
+ background-color: var(--line1-color);
+}
+.anki-dark-line.evens {
+ background-color: var(--line2-color);
 }`
 }
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
-	private currentFlashcardLines: Array<{ flashcard: Flashcard, startLine: number, endLine: number }> = [];
-	private editorObserver: MutationObserver | null = null;
 	public highlighterRibbonIconEl: HTMLElement | null = null;
 
 	async onload() {
 		await this.loadSettings();
-			
-		this.setupEditorObserver();
 		this.updateStyles();
 
-		// Register markdown post processor to hide flashcard IDs in reading view
-		this.registerMarkdownPostProcessor((element) => {
-			const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
-
-			const parentElements: Set<HTMLElement> = new Set();
-			const footnotesToFilter: Text[] = [];
-			const clozeRegex = /\{+(\S[^}:]*)(?:::[^}:]*)?\}(?<=\S\})\}*/g;
-			
-			let node: Text | null;
-			while (node = walker.nextNode() as Text) {
-				if (!node.textContent) continue;
-				// Highlight clozes
-				if (node.parentElement) {
-					parentElements.add(node.parentElement);
-				}
-				// Filter out ^number footnote lines
-				if (node.textContent?.match(/\^[0-9]+/)) {
-					footnotesToFilter.push(node);
-                }
-			}
-			footnotesToFilter.forEach(n => {
-				let parentEl = n.parentElement;
-				if (parentEl) {
-					const html = parentEl.innerHTML;
-					parentEl.innerHTML = html.replace(/(<br>)?\s*\^[0-9]+/g, '');
-				}
-			});
-			parentElements.forEach(p => {
-				p.innerHTML = p.innerHTML.replace(clozeRegex, `<span class="anki-dark-cloze">$1</span>`);
-			});
-		});
+		// Editor extension to highlight flashcard lines
+		this.registerEditorExtension(livePreviewPostProcessor());
+		// Reading view post processor to hide flashcard IDs and highlight clozes
+		this.registerMarkdownPostProcessor(markdownPostProcessor);
 
 		this.addCommand({
 			id: 'highlight-flashcards',
@@ -122,11 +96,6 @@ export default class MyPlugin extends Plugin {
 	}
 
 	onunload() {
-		// Clean up the observer when the plugin is unloaded
-		if (this.editorObserver) {
-			this.editorObserver.disconnect();
-			this.editorObserver = null;
-		}
 	}
 
 	async loadSettings() {
@@ -174,66 +143,6 @@ export default class MyPlugin extends Plugin {
 	}
 
 	highlightCommand(): void {
-		// Store fully processed flashcard lines
-		let fullContent = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor.getValue() || '';
-		this.currentFlashcardLines = getFlashcardLines(fullContent);
-		//this.highlightFlashcardLines(this.currentFlashcardLines);
-		
-		// Highlight partial content
-		let renderedContent = this.getRenderedContent()?.content || '';
-		let flashcardLines = getFlashcardLines(renderedContent);
-		highlightFlashcardLines(this.app, flashcardLines, this.settings);
-
-		if (this.currentFlashcardLines.length > 0) {
-			new Notice('Flashcard lines highlighted!');
-		} else {
-			new Notice('No flashcard lines found!');
-		}
-	}
-
-	setupEditorObserver(): void {
-		// Clean up any existing observer
-		if (this.editorObserver) {
-			this.editorObserver.disconnect();
-			this.editorObserver = null;
-		}
-
-		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-		if (!activeView) return;
-		const editorEl = activeView.contentEl.querySelector('.cm-editor');
-		if (!editorEl) return;
-
-		// Create new observer
-		this.editorObserver = new MutationObserver((mutations) => {
-			if (this.settings.enableEditorObserver) {
-				let rendered = this.getRenderedContent();
-				highlightFlashcardLines(this.app, getFlashcardLines(rendered?.content || ''), this.settings);
-				//this.highlightFlashcardLines(this.currentFlashcardLines);
-			}
-		});
-
-		// Start observing
-		this.editorObserver.observe(editorEl, {
-			childList: true,
-			subtree: true,
-			characterData: true
-		});
-	}
-
-	private getRenderedContent(): { content: string } | null {
-		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-		if (!activeView) return null;
-
-		const editorEl = activeView.contentEl.querySelector('.cm-editor');
-		if (!editorEl) return null;
-
-		const renderedLines = Array.from(editorEl.querySelectorAll('.cm-line'));
-		const visibleContent = renderedLines.map(line => line.textContent || '').join('\n');
-
-		return {
-			content: visibleContent,
-			// startLineNumber: 0
-		};
 	}
 }
 

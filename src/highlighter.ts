@@ -1,32 +1,89 @@
-import { App, MarkdownView, Notice } from 'obsidian';
-import { Flashcard } from './models';
+import { ViewPlugin, DecorationSet, Decoration, ViewUpdate, EditorView } from '@codemirror/view';
+import { Range } from '@codemirror/state';
+import { getFlashcardLines } from './parser';
 
-export function highlightFlashcardLines(app: App, flashcardLines: Array<{ flashcard: Flashcard, startLine: number, endLine: number }>, settings: any): void {
-    let even = false;
-    flashcardLines.forEach(flashcardLine => {
-        let color = even ? settings.secondHighlightColor : settings.firstHighlightColor;
-        let opacity = even ? settings.secondHighlightOpacity : settings.firstHighlightOpacity;
-        highlightLines(app, flashcardLine.startLine, flashcardLine.endLine, color, opacity);
-        even = !even;
+export function markdownPostProcessor(element: HTMLElement) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
+
+    const parentElements: Set<HTMLElement> = new Set();
+    const footnotesToFilter: Text[] = [];
+    const clozeRegex = /\{+(\S[^}:]*)(?:::[^}:]*)?\}(?<=\S\})\}*/g;
+    
+    let node: Text | null;
+    while (node = walker.nextNode() as Text) {
+        if (!node.textContent) continue;
+        // Collect elements for cloze highlighting
+        if (node.parentElement) {
+            parentElements.add(node.parentElement);
+        }
+        // Filter out ^number footnote lines
+        if (node.textContent?.match(/\^[0-9]+/)) {
+            footnotesToFilter.push(node);
+        }
+    }
+    footnotesToFilter.forEach(n => {
+        let parentEl = n.parentElement;
+        if (parentEl) {
+            const html = parentEl.innerHTML;
+            parentEl.innerHTML = html.replace(/(<br>)?\s*\^[0-9]+/g, '');
+        }
+    });
+    parentElements.forEach(p => {
+        p.innerHTML = p.innerHTML.replace(clozeRegex, `<span class="anki-dark-cloze reading-view">$1</span>`);
     });
 }
 
-export function highlightLines(app: App, startLine: number, endLine: number, color: string, opacity: number): void {
-    const activeView = app.workspace.getActiveViewOfType(MarkdownView);
-    const editorEl = activeView?.contentEl.querySelector('.cm-editor');
-    if (!activeView || !editorEl) {
-        new Notice('No active editor found!');
-        return;
-    }
+export function livePreviewPostProcessor() {
+    return ViewPlugin.fromClass(class {
+        decorations: DecorationSet;
 
-    const lineEls = editorEl.querySelectorAll('.cm-line');
-    for (let i = startLine; i <= endLine; i++) {
-        const lineEl = lineEls[i];
-        if (lineEl) {
-            (lineEl as HTMLElement).classList.add('anki-dark-line');
-            (lineEl as HTMLElement).style.backgroundColor = hexToRgba(color, opacity);
+        constructor(view: EditorView) {
+            this.decorations = this.buildDecorations(view);
         }
-    }
+
+        update(update: ViewUpdate) {
+            if (update.docChanged || update.viewportChanged) {
+                this.decorations = this.buildDecorations(update.view);
+            }
+        }
+
+        buildDecorations(view: EditorView) {
+            const decorations: Range<Decoration>[] = [];
+            
+            const clozeRegex = /\{+(\S[^}:]*)(?:::[^}:]*)?\}(?<=\S\})\}*/g;
+            const docString = view.state.doc.toString();
+
+            const flashcardLines = getFlashcardLines(docString);
+            let even = false;
+            flashcardLines.forEach(flashcardLine => {
+                for (let i = flashcardLine.startLine; i <= flashcardLine.endLine; i++) {
+                    const lineStart = view.state.doc.line(i + 1).from;
+                    const lineText = view.state.doc.line(i + 1).text;
+
+                    // Highlight flashcard lines
+                    decorations.push(Decoration.line({
+                        class: `anki-dark-line ${even ? 'evens' : 'odds'} live-preview`
+                    }).range(lineStart));
+
+                    // Highlight clozes
+                    const clozes = lineText.matchAll(clozeRegex);
+                    if (clozes) {
+                        Array.from(clozes).forEach(cloze => {
+                            const clozeStart = cloze.index + lineStart;
+                            const clozeEnd = clozeStart + cloze[0].length;
+                            decorations.push(Decoration.mark({
+                                class: `anki-dark-cloze live-preview`
+                            }).range(clozeStart, clozeEnd));
+                        });
+                    }
+                }
+                even = !even;
+            });
+            return Decoration.set(decorations, true);
+        }
+    }, {
+        decorations: v => v.decorations
+    });
 }
 
 function hexToRgba(hex: string, alpha: number): string {
